@@ -40,6 +40,46 @@ class _FailingOrchestrator:
         raise RuntimeError("Corporate proxy request failed: 503; body=temporary unavailable")
 
 
+class _QualityFailingOrchestrator:
+    def generate_feature(self, *args, **kwargs):
+        _ = (args, kwargs)
+        return {
+            "feature": {
+                "featureText": "Feature: demo\n  Scenario: case\n    Given step",
+                "unmappedSteps": [],
+                "stepsSummary": {"exact": 1, "fuzzy": 0, "unmatched": 0},
+                "quality": {
+                    "policy": "strict",
+                    "passed": False,
+                    "score": 72,
+                    "failures": [
+                        {
+                            "code": "quality_score_too_low",
+                            "message": "Overall quality score is below policy threshold",
+                            "actual": 72,
+                            "expected": ">= 80",
+                        }
+                    ],
+                    "criticIssues": [],
+                    "metrics": {
+                        "syntaxValid": True,
+                        "unmatchedStepsCount": 0,
+                        "unmatchedRatio": 0.0,
+                        "exactRatio": 1.0,
+                        "fuzzyRatio": 0.0,
+                        "parameterFillFullRatio": 1.0,
+                        "ambiguousCount": 0,
+                        "llmRerankedCount": 0,
+                        "normalizationSplitCount": 0,
+                        "qualityScore": 72,
+                    },
+                },
+            },
+            "matchResult": {"matched": [], "unmatched": [], "ambiguousCount": 0},
+            "pipeline": [],
+        }
+
+
 def test_supervisor_respects_cancel_requested_after_attempt(tmp_path: Path) -> None:
     store = RunStateStore()
     job_id = "job-cancel-mid-flight"
@@ -158,3 +198,43 @@ def test_supervisor_classifies_503_exception_as_infra(tmp_path: Path) -> None:
     assert attempts
     classification = attempts[0].get("classification", {})
     assert classification.get("category") == "infra"
+
+
+def test_supervisor_marks_job_needs_attention_when_quality_gate_fails(tmp_path: Path) -> None:
+    store = RunStateStore()
+    job_id = "job-quality-gate-fail"
+    store.put_job(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "cancel_requested": False,
+            "project_root": "/tmp/project",
+            "test_case_text": "generate autotest",
+            "target_path": None,
+            "create_file": False,
+            "overwrite_existing": False,
+            "language": None,
+            "quality_policy": "strict",
+            "profile": "quick",
+            "source": "tests",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "attempts": [],
+            "result": None,
+        }
+    )
+
+    supervisor = ExecutionSupervisor(
+        orchestrator=_QualityFailingOrchestrator(),
+        run_state_store=store,
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+    )
+    asyncio.run(supervisor.execute_job(job_id))
+
+    item = store.get_job(job_id)
+    assert item is not None
+    assert item["status"] == "needs_attention"
+    result = item.get("result") or {}
+    quality = result.get("quality") or {}
+    assert quality.get("passed") is False
+    assert quality.get("score") == 72

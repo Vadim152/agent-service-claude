@@ -20,6 +20,7 @@ class ComposeAutotestRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     testcase_text: str = Field(..., alias="testCaseText")
     language: str | None = None
+    quality_policy: str = Field(default="strict", alias="qualityPolicy")
 
 
 class ExplainUnmappedRequest(ApiBaseModel):
@@ -54,6 +55,7 @@ async def compose_autotest(payload: ComposeAutotestRequest, request: Request) ->
         project_root=payload.project_root,
         testcase_text=payload.testcase_text,
         language=payload.language,
+        quality_policy=payload.quality_policy,
     )
 
 

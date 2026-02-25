@@ -26,6 +26,7 @@ import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
+import ru.sber.aitestplugin.model.QualityReportDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
@@ -92,6 +93,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var resultTargetPath: String? = dialogOptions.targetPath
             private var unmappedSteps: List<UnmappedStepDto> = emptyList()
             private var fileStatus: Map<String, Any?>? = null
+            private var quality: QualityReportDto? = null
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Creating job..."
@@ -121,6 +123,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                 }
                 unmappedSteps = feature.unmappedSteps
                 fileStatus = feature.fileStatus
+                quality = feature.quality
                 val targetFromFileStatus = feature.fileStatus?.get("targetPath")?.toString()
                 resultTargetPath = targetFromFileStatus ?: resultTargetPath
             }
@@ -133,12 +136,14 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                 val fileStatusCode = fileStatus?.get("status")?.toString().orEmpty()
                 val notificationType = if (fileStatusCode == "rejected_outside_project") {
                     NotificationType.ERROR
+                } else if (quality?.passed == false) {
+                    NotificationType.WARNING
                 } else {
                     NotificationType.INFORMATION
                 }
                 notify(
                     project,
-                    buildNotificationMessage(unmappedSteps, fileStatus),
+                    buildNotificationMessage(unmappedSteps, fileStatus, quality),
                     notificationType
                 )
             }
@@ -227,7 +232,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
 
     private fun buildNotificationMessage(
         unmappedSteps: List<UnmappedStepDto>,
-        fileStatus: Map<String, Any?>?
+        fileStatus: Map<String, Any?>?,
+        quality: QualityReportDto?
     ): String {
         val base = "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}"
         val status = fileStatus?.get("status")?.toString()
@@ -235,7 +241,9 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             val target = fileStatus["targetPath"]?.toString().orEmpty()
             return "Feature generated, but saving outside current project is blocked: $target"
         }
-        return if (status.isNullOrBlank()) base else "$base (file: $status)"
+        val qualitySuffix = quality?.let { " (quality: ${it.score}, gate=${if (it.passed) "pass" else "fail"})" } ?: ""
+        val filePart = if (status.isNullOrBlank()) base else "$base (file: $status)"
+        return "$filePart$qualitySuffix"
     }
 
     private fun updateToolWindowUnmapped(project: Project, unmappedSteps: List<UnmappedStepDto>) {

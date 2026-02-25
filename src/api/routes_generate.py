@@ -18,6 +18,7 @@ from api.schemas import (
     GenerateFeatureRequest,
     GenerateFeatureResponse,
     PipelineStepDto,
+    QualityReportDto,
     StepDetailDto,
     StepsSummaryDto,
     StepDefinitionDto,
@@ -197,6 +198,7 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         if request_model.zephyr_auth
         else None,
         jira_instance=request_model.jira_instance,
+        quality_policy=request_model.quality_policy,
     )
 
     feature_payload = result.get("feature", {})
@@ -221,6 +223,10 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         fuzzy=steps_summary_raw.get("fuzzy", 0),
         unmatched=steps_summary_raw.get("unmatched", 0),
     )
+    quality = None
+    quality_payload = feature_payload.get("quality")
+    if isinstance(quality_payload, dict):
+        quality = QualityReportDto.model_validate(quality_payload)
 
     logger.info(
         "API: генерация завершена, unmapped=%s, used_steps=%s",
@@ -239,6 +245,7 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         pipeline=pipeline,
         step_details=step_details,
         parameter_fill_summary=feature_payload.get("parameterFillSummary") or {},
+        quality=quality,
     )
 
 

@@ -19,6 +19,7 @@ from infrastructure.step_index_store import StepIndexStore
 from integrations.jira_testcase_normalizer import normalize_jira_testcase
 from integrations.jira_testcase_provider import JiraTestcaseProvider, extract_jira_testcase_key
 from self_healing.capabilities import CapabilityRegistry
+from tools.generation_quality import evaluate_generation_quality, normalize_quality_policy
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +39,14 @@ class FeatureGenerationState(TypedDict, total=False):
     create_file: bool
     overwrite_existing: bool
     language: str | None
+    quality_policy: str
     resolved_testcase_source: str | None
     resolved_testcase_key: str | None
     normalization_report: dict[str, Any] | None
     scenario: dict[str, Any]
     match_result: dict[str, Any]
     feature: dict[str, Any]
+    quality_report: dict[str, Any]
     file_status: dict[str, Any] | None
     pipeline: list[dict[str, Any]]
 
@@ -108,15 +111,17 @@ class Orchestrator:
         graph.add_node("match_steps", self._match_steps_node())
         graph.add_node("build_feature", self._build_feature_node())
         graph.add_node("assemble_pipeline", self._assemble_pipeline_node())
+        graph.add_node("evaluate_quality", self._evaluate_quality_node())
         graph.add_node("apply_feature", self._apply_feature_node())
-        graph.add_node("skip_apply", lambda _: {"file_status": None})
+        graph.add_node("skip_apply", self._skip_apply_node())
         graph.set_entry_point("resolve_testcase_source")
         graph.add_edge("resolve_testcase_source", "parse_testcase")
         graph.add_edge("parse_testcase", "match_steps")
         graph.add_edge("match_steps", "build_feature")
         graph.add_edge("build_feature", "assemble_pipeline")
+        graph.add_edge("assemble_pipeline", "evaluate_quality")
         graph.add_conditional_edges(
-            "assemble_pipeline",
+            "evaluate_quality",
             self._should_apply_feature,
             {"apply_feature": "apply_feature", "skip_apply": "skip_apply"},
         )
@@ -323,9 +328,66 @@ class Orchestrator:
 
         return _node
 
+    def _skip_apply_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
+        def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            if not (state.get("create_file") and state.get("target_path")):
+                return {"file_status": None}
+            quality = state.get("quality_report") or state.get("feature", {}).get("quality") or {}
+            if bool(quality.get("passed", False)):
+                return {"file_status": None}
+            return {
+                "file_status": {
+                    "projectRoot": state.get("project_root"),
+                    "targetPath": state.get("target_path"),
+                    "status": "skipped_quality_gate",
+                    "message": "Quality gate failed; feature was not written to disk",
+                }
+            }
+
+        return _node
+
+    def _evaluate_quality_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
+        def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            feature_payload = dict(state.get("feature", {}))
+            quality_report = evaluate_generation_quality(
+                feature_payload=feature_payload,
+                match_result=state.get("match_result", {}),
+                scenario=state.get("scenario", {}),
+                policy=state.get("quality_policy", "strict"),
+            )
+            feature_payload["quality"] = quality_report
+            pipeline = list(state.get("pipeline", []))
+            pipeline.append(
+                {
+                    "stage": "quality_gate",
+                    "status": "passed" if quality_report.get("passed") else "failed",
+                    "details": {
+                        "policy": quality_report.get("policy"),
+                        "score": quality_report.get("score"),
+                        "failures": [
+                            item.get("code")
+                            for item in quality_report.get("failures", [])
+                            if isinstance(item, dict)
+                        ],
+                    },
+                }
+            )
+            return {
+                "feature": feature_payload,
+                "quality_report": quality_report,
+                "pipeline": pipeline,
+            }
+
+        return _node
+
     @staticmethod
     def _should_apply_feature(state: FeatureGenerationState) -> str:
-        if state.get("create_file") and state.get("target_path"):
+        quality = state.get("quality_report") or state.get("feature", {}).get("quality") or {}
+        if (
+            state.get("create_file")
+            and state.get("target_path")
+            and bool(quality.get("passed", False))
+        ):
             return "apply_feature"
         return "skip_apply"
 
@@ -381,6 +443,7 @@ class Orchestrator:
         testcase_text: str,
         *,
         language: str | None = None,
+        quality_policy: str | None = None,
     ) -> dict[str, Any]:
         return self.generate_feature(
             project_root=project_root,
@@ -389,6 +452,7 @@ class Orchestrator:
             create_file=False,
             overwrite_existing=False,
             language=language,
+            quality_policy=quality_policy,
         )
 
     @staticmethod
@@ -416,6 +480,7 @@ class Orchestrator:
         language: str | None = None,
         zephyr_auth: dict[str, Any] | None = None,
         jira_instance: str | None = None,
+        quality_policy: str | None = None,
     ) -> dict[str, Any]:
         logger.info("[Orchestrator] Generate feature for project %s", project_root)
         state = self._feature_graph.invoke(
@@ -428,6 +493,7 @@ class Orchestrator:
                 "create_file": create_file,
                 "overwrite_existing": overwrite_existing,
                 "language": language,
+                "quality_policy": normalize_quality_policy(quality_policy),
             }
         )
         scenario_dict = state.get("scenario", {})

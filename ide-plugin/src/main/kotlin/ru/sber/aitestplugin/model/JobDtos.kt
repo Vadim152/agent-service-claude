@@ -12,6 +12,7 @@ data class JobCreateRequestDto(
     val createFile: Boolean = false,
     val overwriteExisting: Boolean = false,
     val language: String? = null,
+    val qualityPolicy: String = "strict",
     val source: String = "ide-plugin"
 )
 
@@ -57,13 +58,43 @@ data class JobFeatureResultDto(
     val pipeline: List<Map<String, Any?>> = emptyList(),
     val stepDetails: List<Map<String, Any?>> = emptyList(),
     val parameterFillSummary: Map<String, Int> = emptyMap(),
-    val fileStatus: Map<String, Any?>? = null
+    val fileStatus: Map<String, Any?>? = null,
+    val quality: QualityReportDto? = null
 )
 
 data class StepsSummaryDto(
     val exact: Int = 0,
     val fuzzy: Int = 0,
     val unmatched: Int = 0
+)
+
+data class QualityFailureDto(
+    val code: String,
+    val message: String,
+    val actual: Any? = null,
+    val expected: Any? = null
+)
+
+data class QualityMetricsDto(
+    val syntaxValid: Boolean = false,
+    val unmatchedStepsCount: Int = 0,
+    val unmatchedRatio: Double = 0.0,
+    val exactRatio: Double = 0.0,
+    val fuzzyRatio: Double = 0.0,
+    val parameterFillFullRatio: Double = 0.0,
+    val ambiguousCount: Int = 0,
+    val llmRerankedCount: Int = 0,
+    val normalizationSplitCount: Int = 0,
+    val qualityScore: Int = 0
+)
+
+data class QualityReportDto(
+    val policy: String = "strict",
+    val passed: Boolean = false,
+    val score: Int = 0,
+    val failures: List<QualityFailureDto> = emptyList(),
+    val criticIssues: List<String> = emptyList(),
+    val metrics: QualityMetricsDto = QualityMetricsDto()
 )
 
 data class JobResultResponseDto(

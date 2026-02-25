@@ -142,6 +142,7 @@ class ExecutionSupervisor:
                         create_file=bool(job.get("create_file")),
                         overwrite_existing=bool(job.get("overwrite_existing")),
                         language=job.get("language"),
+                        quality_policy=job.get("quality_policy", "strict"),
                         zephyr_auth=job.get("zephyr_auth"),
                         jira_instance=job.get("jira_instance"),
                     )
@@ -163,7 +164,11 @@ class ExecutionSupervisor:
                     break
                 feature_payload = result.get("feature", {})
                 unmatched = feature_payload.get("unmappedSteps", [])
-                has_failure = len(unmatched) > 0
+                quality_payload = feature_payload.get("quality") or {}
+                quality_passed = True
+                if isinstance(quality_payload, dict):
+                    quality_passed = bool(quality_payload.get("passed", False))
+                has_failure = (len(unmatched) > 0) or (not quality_passed)
 
                 feature_result_path = self.artifact_store.write_json(
                     job_id=job_id,
@@ -173,7 +178,13 @@ class ExecutionSupervisor:
                     payload=result,
                 )
                 artifacts["featureResult"] = feature_result_path
-                classifier_input = {"unmatched": str(unmatched), "artifactUri": feature_result_path}
+                classifier_input = {
+                    "unmatched": str(unmatched),
+                    "qualityFailures": str(quality_payload.get("failures", []))
+                    if isinstance(quality_payload, dict)
+                    else "[]",
+                    "artifactUri": feature_result_path,
+                }
 
                 if not has_failure:
                     succeeded = True
@@ -408,6 +419,7 @@ class ExecutionSupervisor:
             "stepDetails": feature_payload.get("stepDetails", []),
             "parameterFillSummary": feature_payload.get("parameterFillSummary", {}),
             "meta": feature_payload.get("meta"),
+            "quality": feature_payload.get("quality"),
             "pipeline": result.get("pipeline", []),
             "fileStatus": result.get("fileStatus"),
         }

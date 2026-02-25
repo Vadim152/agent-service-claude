@@ -17,7 +17,8 @@ data class GenerateFeatureRequestDto(
     val testCaseText: String,
     val targetPath: String? = null,
     val options: GenerateFeatureOptionsDto? = null,
-    val zephyrAuth: ZephyrAuthDto? = null
+    val zephyrAuth: ZephyrAuthDto? = null,
+    val qualityPolicy: String = "strict"
 )
 
 /** Ответ на генерацию feature. */
@@ -27,5 +28,6 @@ data class GenerateFeatureResponseDto(
     val usedSteps: List<StepDefinitionDto> = emptyList(),
     val meta: Map<String, Any?>? = emptyMap(),
     val stepDetails: List<Map<String, Any?>> = emptyList(),
-    val parameterFillSummary: Map<String, Int> = emptyMap()
+    val parameterFillSummary: Map<String, Int> = emptyMap(),
+    val quality: QualityReportDto? = null
 )

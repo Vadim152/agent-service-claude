@@ -134,6 +134,7 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
             "create_file": payload.create_file,
             "overwrite_existing": payload.overwrite_existing,
             "language": payload.language,
+            "quality_policy": payload.quality_policy,
             "zephyr_auth": zephyr_auth,
             "jira_instance": payload.jira_instance,
             "profile": payload.profile,

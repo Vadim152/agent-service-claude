@@ -48,6 +48,7 @@ def test_create_job_initializes_result_and_attempts() -> None:
     assert item is not None
     assert item["jira_instance"] == "https://jira.sberbank.ru"
     assert item["zephyr_auth"] == {"authType": "TOKEN", "token": "secret", "login": None, "password": None}
+    assert item["quality_policy"] == "strict"
     assert item["result"] is None
     assert item["attempts"] == []
 
@@ -110,6 +111,25 @@ def test_get_job_result_returns_ready_payload() -> None:
                 "usedSteps": [],
                 "buildStage": "ok",
                 "stepsSummary": {"exact": 1, "fuzzy": 0, "unmatched": 0},
+                "quality": {
+                    "policy": "strict",
+                    "passed": True,
+                    "score": 92,
+                    "failures": [],
+                    "criticIssues": [],
+                    "metrics": {
+                        "syntaxValid": True,
+                        "unmatchedStepsCount": 0,
+                        "unmatchedRatio": 0.0,
+                        "exactRatio": 1.0,
+                        "fuzzyRatio": 0.0,
+                        "parameterFillFullRatio": 1.0,
+                        "ambiguousCount": 0,
+                        "llmRerankedCount": 0,
+                        "normalizationSplitCount": 0,
+                        "qualityScore": 92,
+                    },
+                },
                 "meta": {"language": "en"},
                 "pipeline": [],
                 "fileStatus": None,
@@ -124,6 +144,8 @@ def test_get_job_result_returns_ready_payload() -> None:
     assert payload["status"] == "succeeded"
     assert payload["feature"]["featureText"] == "Feature: sample"
     assert payload["feature"]["stepsSummary"]["exact"] == 1
+    assert payload["feature"]["quality"]["passed"] is True
+    assert payload["feature"]["quality"]["score"] == 92
 
 
 def test_get_job_result_returns_409_when_not_ready() -> None:
@@ -237,3 +259,24 @@ def test_create_job_with_same_idempotency_key_and_different_payload_returns_409(
 
     assert first.status_code == 200
     assert second.status_code == 409
+
+
+def test_create_job_persists_selected_quality_policy() -> None:
+    app, store = _build_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs",
+        json={
+            "projectRoot": "/tmp/project",
+            "testCaseText": "Given something",
+            "qualityPolicy": "balanced",
+            "source": "test-suite",
+            "profile": "quick",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    item = store.get_job(payload["jobId"])
+    assert item is not None
+    assert item["quality_policy"] == "balanced"

@@ -57,3 +57,21 @@ def test_compose_autotest_tool_endpoint() -> None:
     payload = response.json()
     assert payload["kind"] == "compose_autotest"
     assert payload["project_root"] == "/tmp/project"
+    assert payload["quality_policy"] == "strict"
+
+
+def test_compose_autotest_tool_endpoint_accepts_quality_policy() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    response = client.post(
+        "/tools/compose-autotest",
+        json={
+            "projectRoot": "/tmp/project",
+            "testCaseText": "Given login",
+            "qualityPolicy": "balanced",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "compose_autotest"
+    assert payload["quality_policy"] == "balanced"

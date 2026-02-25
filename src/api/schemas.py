@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -115,6 +115,35 @@ class StepsSummaryDto(ApiBaseModel):
     unmatched: int = Field(default=0, description="РљРѕР»РёС‡РµСЃС‚РІРѕ С€Р°РіРѕРІ Р±РµР· СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ")
 
 
+class QualityFailureDto(ApiBaseModel):
+    code: str
+    message: str
+    actual: Any = None
+    expected: Any = None
+
+
+class QualityMetricsDto(ApiBaseModel):
+    syntax_valid: bool = Field(default=False, alias="syntaxValid")
+    unmatched_steps_count: int = Field(default=0, alias="unmatchedStepsCount")
+    unmatched_ratio: float = Field(default=0.0, alias="unmatchedRatio")
+    exact_ratio: float = Field(default=0.0, alias="exactRatio")
+    fuzzy_ratio: float = Field(default=0.0, alias="fuzzyRatio")
+    parameter_fill_full_ratio: float = Field(default=0.0, alias="parameterFillFullRatio")
+    ambiguous_count: int = Field(default=0, alias="ambiguousCount")
+    llm_reranked_count: int = Field(default=0, alias="llmRerankedCount")
+    normalization_split_count: int = Field(default=0, alias="normalizationSplitCount")
+    quality_score: int = Field(default=0, alias="qualityScore")
+
+
+class QualityReportDto(ApiBaseModel):
+    policy: str = Field(default="strict")
+    passed: bool = Field(default=False)
+    score: int = Field(default=0)
+    failures: list[QualityFailureDto] = Field(default_factory=list)
+    critic_issues: list[str] = Field(default_factory=list, alias="criticIssues")
+    metrics: QualityMetricsDto = Field(default_factory=QualityMetricsDto)
+
+
 class PipelineStepDto(ApiBaseModel):
     """РћРїРёСЃР°РЅРёРµ С€Р°РіР° РїР°Р№РїР»Р°Р№РЅР° РіРµРЅРµСЂР°С†РёРё feature."""
 
@@ -220,6 +249,11 @@ class GenerateFeatureRequest(ApiBaseModel):
         alias="jiraInstance",
         description="Jira base URL (e.g. https://jira.sberbank.ru)",
     )
+    quality_policy: Literal["strict", "balanced", "lenient"] = Field(
+        default="strict",
+        alias="qualityPolicy",
+        description="Policy for deterministic quality gate over generated feature",
+    )
 
 
 class GenerateFeatureResponse(ApiBaseModel):
@@ -257,6 +291,10 @@ class GenerateFeatureResponse(ApiBaseModel):
         default_factory=dict,
         alias="parameterFillSummary",
         description="РЎРІРѕРґРєР° РєР°С‡РµСЃС‚РІР° Р·Р°РїРѕР»РЅРµРЅРёСЏ РїР°СЂР°РјРµС‚СЂРѕРІ",
+    )
+    quality: QualityReportDto | None = Field(
+        default=None,
+        description="Deterministic quality evaluation and gate result",
     )
 
 
@@ -319,6 +357,10 @@ class JobCreateRequest(ApiBaseModel):
     create_file: bool = Field(default=False, alias="createFile")
     overwrite_existing: bool = Field(default=False, alias="overwriteExisting")
     language: str | None = None
+    quality_policy: Literal["strict", "balanced", "lenient"] = Field(
+        default="strict",
+        alias="qualityPolicy",
+    )
     source: str = Field(default="api")
 
 
@@ -381,6 +423,7 @@ class JobFeatureResultDto(ApiBaseModel):
         default_factory=dict, alias="parameterFillSummary"
     )
     file_status: dict[str, Any] | None = Field(default=None, alias="fileStatus")
+    quality: QualityReportDto | None = Field(default=None)
 
 
 class JobResultResponse(ApiBaseModel):
@@ -451,6 +494,9 @@ __all__ = [
     "JobEventDto",
     "JobCancelResponse",
     "PipelineStepDto",
+    "QualityFailureDto",
+    "QualityMetricsDto",
+    "QualityReportDto",
     "StepDetailDto",
     "ScanStepsRequest",
     "ScanStepsResponse",

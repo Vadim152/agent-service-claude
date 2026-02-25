@@ -345,6 +345,7 @@ class ChatAgentRuntime:
                 "create_file": False,
                 "overwrite_existing": False,
                 "language": intent.get("language"),
+                "quality_policy": "strict",
                 "zephyr_auth": session.get("zephyr_auth"),
                 "jira_instance": session.get("jira_instance"),
                 "profile": "quick",
@@ -387,16 +388,22 @@ class ChatAgentRuntime:
     def _format_autotest_preview(feature_payload: dict[str, Any]) -> str:
         feature_text = str(feature_payload.get("featureText", "")).strip()
         steps_summary = feature_payload.get("stepsSummary") or {}
+        quality = feature_payload.get("quality") or {}
         exact = int(steps_summary.get("exact", 0))
         fuzzy = int(steps_summary.get("fuzzy", 0))
         unmatched = int(steps_summary.get("unmatched", 0))
+        quality_score = quality.get("score")
+        quality_passed = quality.get("passed")
+        quality_line = ""
+        if quality_score is not None and quality_passed is not None:
+            quality_line = f"\nQuality: score={quality_score}, gate={'pass' if quality_passed else 'fail'}."
         pipeline = feature_payload.get("pipeline") or []
         pipeline_summary = ", ".join(str(step.get("stage", "?")) for step in pipeline)
         preview = feature_text[:1800] if feature_text else "<empty>"
         return (
-            "Предпросмотр автотеста готов.\n"
-            f"Сводка шагов: exact={exact}, fuzzy={fuzzy}, unmatched={unmatched}.\n"
-            f"Пайплайн: {pipeline_summary or 'n/a'}.\n\n"
+            "Autotest preview is ready.\n"
+            f"Step summary: exact={exact}, fuzzy={fuzzy}, unmatched={unmatched}.\n"
+            f"Pipeline: {pipeline_summary or 'n/a'}.{quality_line}\n\n"
             f"{preview}"
         )
 
@@ -878,3 +885,4 @@ class ChatAgentRuntime:
                     last_emit_ts = now
             index = next_index
             await asyncio.sleep(0.15)
+

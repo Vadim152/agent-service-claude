@@ -1,3 +1,7 @@
+import org.gradle.api.GradleException
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.language.jvm.tasks.ProcessResources
+
 plugins {
     id("org.jetbrains.intellij.platform") version "2.11.0"
     kotlin("jvm") version "2.1.0"
@@ -44,8 +48,61 @@ intellijPlatform {
     }
 }
 
+val mojibakeMarkers = listOf(
+    "РџР",
+    "РЎР",
+    "РќР",
+    "РђР",
+    "Р”Р",
+    "РС",
+    "РћС",
+    "РљР",
+    "СЃС",
+    "С‚С",
+    "Ð",
+    "Ñ"
+)
+
+val checkEncodingHealth by tasks.registering {
+    group = "verification"
+    description = "Fails if source/resource files contain mojibake markers."
+    doLast {
+        val hits = mutableListOf<String>()
+        fileTree("src/main") {
+            include("**/*.kt", "**/*.xml", "**/*.properties")
+        }
+            .files
+            .sortedBy { it.path }
+            .forEach { file ->
+                file.readLines(Charsets.UTF_8).forEachIndexed { index, line ->
+                    if (mojibakeMarkers.any(line::contains)) {
+                        val relative = file.relativeTo(projectDir).invariantSeparatorsPath
+                        hits += "$relative:${index + 1}: ${line.trim()}"
+                    }
+                }
+            }
+
+        if (hits.isNotEmpty()) {
+            val preview = hits.take(30).joinToString("\n")
+            val suffix = if (hits.size > 30) "\n... and ${hits.size - 30} more" else ""
+            throw GradleException(
+                "Detected possible mojibake artifacts. Save files in UTF-8.\n$preview$suffix"
+            )
+        }
+    }
+}
+
 tasks {
+    withType<JavaCompile>().configureEach {
+        options.encoding = "UTF-8"
+    }
+    withType<ProcessResources>().configureEach {
+        filteringCharset = "UTF-8"
+    }
     test {
         useJUnitPlatform()
+    }
+    named("check") {
+        dependsOn(checkEncodingHealth)
     }
 }

@@ -1,4 +1,4 @@
-﻿package ru.sber.aitestplugin.actions
+package ru.sber.aitestplugin.actions
 
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -38,7 +38,7 @@ import java.nio.file.Paths
 import javax.swing.JOptionPane
 
 /**
- * Р”РµР№СЃС‚РІРёРµ, РіРµРЅРµСЂРёСЂСѓСЋС‰РµРµ .feature РёР· РІС‹РґРµР»РµРЅРЅРѕРіРѕ С‚РµРєСЃС‚Р° С‚РµСЃС‚РєРµР№СЃР°.
+ * Действие, генерирующее .feature из выделенного текста тесткейса.
  */
 class GenerateFeatureFromSelectionAction : AnAction() {
     private val unmappedHighlightKey = Key.create<Boolean>("ru.sber.aitestplugin.unmapped.step")
@@ -47,21 +47,21 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         val editor = e.getData(CommonDataKeys.EDITOR)
         val project = e.project
         if (editor == null || project == null) {
-            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
+            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
             return
         }
         val selectionModel = editor.selectionModel
         val selectedText = selectionModel.selectedText?.trim() ?: run {
-            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
+            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
             return
         }
         if (selectedText.isBlank()) {
-            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
+            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
             return
         }
         val projectRoot = project.basePath?.trim().orEmpty()
         if (projectRoot.isBlank()) {
-            JOptionPane.showMessageDialog(null, "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РєРѕСЂРµРЅСЊ РїСЂРѕРµРєС‚Р°")
+            JOptionPane.showMessageDialog(null, "Не удалось определить корень проекта")
             return
         }
 
@@ -225,7 +225,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
 
     private fun notify(project: Project, message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("РђРіРµРЅС‚СѓРј")
+            .getNotificationGroup("Агентум")
             .createNotification(message, type)
             .notify(project)
     }

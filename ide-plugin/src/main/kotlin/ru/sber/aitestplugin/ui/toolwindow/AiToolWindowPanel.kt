@@ -38,6 +38,7 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -207,6 +208,14 @@ class AiToolWindowPanel(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                     isOpaque = false
                     add(headerButton("+") { ensureSessionAsync(forceNew = true) })
+                    add(headerButton("Memory") {
+                        val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
+                        if (projectRoot.isBlank()) {
+                            appendSystemLine("Project root is empty. Set it in plugin settings first.")
+                        } else {
+                            MemoryManagerDialog(project, backendClient, projectRoot).show()
+                        }
+                    })
                     add(headerButton("РСЃС‚РѕСЂРёСЏ") {
                         showHistoryScreen()
                         loadSessionsHistoryAsync()

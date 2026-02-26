@@ -143,6 +143,9 @@ class ExecutionSupervisor:
                         overwrite_existing=bool(job.get("overwrite_existing")),
                         language=job.get("language"),
                         quality_policy=job.get("quality_policy", "strict"),
+                        explicit_quality_policy=bool(job.get("quality_policy_explicit", False)),
+                        explicit_language=job.get("language") is not None,
+                        explicit_target_path=job.get("target_path") is not None,
                         zephyr_auth=job.get("zephyr_auth"),
                         jira_instance=job.get("jira_instance"),
                     )

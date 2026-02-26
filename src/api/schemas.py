@@ -471,6 +471,122 @@ class MemoryFeedbackResponse(ApiBaseModel):
     step_boosts: dict[str, float] = Field(default_factory=dict, alias="stepBoosts")
     feedback_count: int = Field(default=0, alias="feedbackCount")
 
+
+class GenerationRuleConditionDto(ApiBaseModel):
+    jira_key_pattern: str | None = Field(default=None, alias="jiraKeyPattern")
+    language_in: list[Literal["ru", "en"]] = Field(default_factory=list, alias="languageIn")
+    quality_policy_in: list[Literal["strict", "balanced", "lenient"]] = Field(
+        default_factory=list,
+        alias="qualityPolicyIn",
+    )
+    text_regex: str | None = Field(default=None, alias="textRegex")
+
+
+class GenerationRuleActionsDto(ApiBaseModel):
+    quality_policy: Literal["strict", "balanced", "lenient"] | None = Field(
+        default=None,
+        alias="qualityPolicy",
+    )
+    language: Literal["ru", "en"] | None = None
+    target_path_template: str | None = Field(default=None, alias="targetPathTemplate")
+    apply_templates: list[str] = Field(default_factory=list, alias="applyTemplates")
+
+
+class GenerationRuleDto(ApiBaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    priority: int = 100
+    source: str = "api"
+    condition: GenerationRuleConditionDto = Field(default_factory=GenerationRuleConditionDto)
+    actions: GenerationRuleActionsDto = Field(default_factory=GenerationRuleActionsDto)
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class GenerationRuleCreateRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    name: str
+    enabled: bool = True
+    priority: int = 100
+    source: str = "api"
+    condition: GenerationRuleConditionDto = Field(default_factory=GenerationRuleConditionDto)
+    actions: GenerationRuleActionsDto = Field(default_factory=GenerationRuleActionsDto)
+
+
+class GenerationRulePatchRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    name: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    condition: GenerationRuleConditionDto | None = None
+    actions: GenerationRuleActionsDto | None = None
+
+
+class GenerationRuleListResponse(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    items: list[GenerationRuleDto] = Field(default_factory=list)
+
+
+class StepTemplateDto(ApiBaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    priority: int = 100
+    source: str = "api"
+    trigger_regex: str | None = Field(default=None, alias="triggerRegex")
+    steps: list[str] = Field(default_factory=list)
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class StepTemplateCreateRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    name: str
+    enabled: bool = True
+    priority: int = 100
+    source: str = "api"
+    trigger_regex: str | None = Field(default=None, alias="triggerRegex")
+    steps: list[str] = Field(default_factory=list)
+
+
+class StepTemplatePatchRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    name: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    trigger_regex: str | None = Field(default=None, alias="triggerRegex")
+    steps: list[str] | None = None
+
+
+class StepTemplateListResponse(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    items: list[StepTemplateDto] = Field(default_factory=list)
+
+
+class GenerationResolvePreviewRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    text: str
+    jira_key: str | None = Field(default=None, alias="jiraKey")
+    language: Literal["ru", "en"] | None = None
+    quality_policy: Literal["strict", "balanced", "lenient"] | None = Field(
+        default=None,
+        alias="qualityPolicy",
+    )
+
+
+class GenerationResolvePreviewResponse(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    quality_policy: Literal["strict", "balanced", "lenient"] | None = Field(
+        default=None,
+        alias="qualityPolicy",
+    )
+    language: Literal["ru", "en"] | None = None
+    target_path: str | None = Field(default=None, alias="targetPath")
+    applied_rule_ids: list[str] = Field(default_factory=list, alias="appliedRuleIds")
+    applied_template_ids: list[str] = Field(default_factory=list, alias="appliedTemplateIds")
+    template_steps: list[str] = Field(default_factory=list, alias="templateSteps")
+
 __all__ = [
     "ApplyFeatureRequest",
     "ApplyFeatureResponse",
@@ -478,6 +594,18 @@ __all__ = [
     "LlmTestResponse",
     "MemoryFeedbackRequest",
     "MemoryFeedbackResponse",
+    "GenerationRuleConditionDto",
+    "GenerationRuleActionsDto",
+    "GenerationRuleDto",
+    "GenerationRuleCreateRequest",
+    "GenerationRulePatchRequest",
+    "GenerationRuleListResponse",
+    "StepTemplateDto",
+    "StepTemplateCreateRequest",
+    "StepTemplatePatchRequest",
+    "StepTemplateListResponse",
+    "GenerationResolvePreviewRequest",
+    "GenerationResolvePreviewResponse",
     "GenerateFeatureOptions",
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",

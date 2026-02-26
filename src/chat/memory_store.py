@@ -71,6 +71,8 @@ class ChatMemoryStore:
                 "updatedAt": None,
                 "goals": [],
                 "preferences": {},
+                "generationRules": [],
+                "stepTemplates": [],
                 "recentArtifacts": [],
                 "summary": None,
             }
@@ -84,6 +86,8 @@ class ChatMemoryStore:
         payload.setdefault("key", key)
         payload.setdefault("goals", [])
         payload.setdefault("preferences", {})
+        payload.setdefault("generationRules", [])
+        payload.setdefault("stepTemplates", [])
         payload.setdefault("recentArtifacts", [])
         payload.setdefault("summary", None)
         payload.setdefault("updatedAt", None)

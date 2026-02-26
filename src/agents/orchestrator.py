@@ -14,7 +14,7 @@ from agents.testcase_parser_agent import TestcaseParserAgent
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.fs_repo import FsRepository
 from infrastructure.llm_client import LLMClient
-from infrastructure.project_learning_store import ProjectLearningStore
+from memory.service import MemoryService
 from infrastructure.step_index_store import StepIndexStore
 from integrations.jira_testcase_normalizer import normalize_jira_testcase
 from integrations.jira_testcase_provider import JiraTestcaseProvider, extract_jira_testcase_key
@@ -40,6 +40,12 @@ class FeatureGenerationState(TypedDict, total=False):
     overwrite_existing: bool
     language: str | None
     quality_policy: str
+    explicit_quality_policy: bool
+    explicit_language: bool
+    explicit_target_path: bool
+    template_steps: list[str]
+    applied_rule_ids: list[str]
+    applied_template_ids: list[str]
     resolved_testcase_source: str | None
     resolved_testcase_key: str | None
     normalization_report: dict[str, Any] | None
@@ -62,7 +68,7 @@ class Orchestrator:
         feature_builder_agent: FeatureBuilderAgent,
         step_index_store: StepIndexStore,
         embeddings_store: EmbeddingsStore,
-        project_learning_store: ProjectLearningStore | None = None,
+        project_learning_store: MemoryService | None = None,
         llm_client: LLMClient | None = None,
         jira_testcase_provider: JiraTestcaseProvider | None = None,
     ) -> None:
@@ -107,7 +113,9 @@ class Orchestrator:
     def _build_feature_graph(self):
         graph = StateGraph(FeatureGenerationState)
         graph.add_node("resolve_testcase_source", self._resolve_testcase_source_node())
+        graph.add_node("resolve_memory_preferences", self._resolve_memory_preferences_node())
         graph.add_node("parse_testcase", self._parse_testcase_node())
+        graph.add_node("inject_template_steps", self._inject_template_steps_node())
         graph.add_node("match_steps", self._match_steps_node())
         graph.add_node("build_feature", self._build_feature_node())
         graph.add_node("assemble_pipeline", self._assemble_pipeline_node())
@@ -115,8 +123,10 @@ class Orchestrator:
         graph.add_node("apply_feature", self._apply_feature_node())
         graph.add_node("skip_apply", self._skip_apply_node())
         graph.set_entry_point("resolve_testcase_source")
-        graph.add_edge("resolve_testcase_source", "parse_testcase")
-        graph.add_edge("parse_testcase", "match_steps")
+        graph.add_edge("resolve_testcase_source", "resolve_memory_preferences")
+        graph.add_edge("resolve_memory_preferences", "parse_testcase")
+        graph.add_edge("parse_testcase", "inject_template_steps")
+        graph.add_edge("inject_template_steps", "match_steps")
         graph.add_edge("match_steps", "build_feature")
         graph.add_edge("build_feature", "assemble_pipeline")
         graph.add_edge("assemble_pipeline", "evaluate_quality")
@@ -188,6 +198,59 @@ class Orchestrator:
             if resolved_key:
                 scenario_dict["tags"] = [f"TmsLink={str(resolved_key).strip()}"]
             return {"scenario": scenario_dict}
+
+        return _node
+
+    def _resolve_memory_preferences_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
+        def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            if not self.project_learning_store:
+                return {
+                    "template_steps": [],
+                    "applied_rule_ids": [],
+                    "applied_template_ids": [],
+                }
+            resolved_key = state.get("resolved_testcase_key")
+            resolved = self.project_learning_store.resolve_generation_preferences(
+                project_root=state["project_root"],
+                text=state.get("testcase_text", ""),
+                jira_key=str(resolved_key).strip() if resolved_key else None,
+                language=state.get("language"),
+                quality_policy=state.get("quality_policy"),
+            )
+            updated: dict[str, Any] = {
+                "template_steps": list(resolved.get("templateSteps", [])),
+                "applied_rule_ids": list(resolved.get("appliedRuleIds", [])),
+                "applied_template_ids": list(resolved.get("appliedTemplateIds", [])),
+            }
+            if not bool(state.get("explicit_quality_policy", False)) and resolved.get("qualityPolicy"):
+                updated["quality_policy"] = resolved.get("qualityPolicy")
+            if not bool(state.get("explicit_language", False)) and resolved.get("language"):
+                updated["language"] = resolved.get("language")
+            if not bool(state.get("explicit_target_path", False)) and resolved.get("targetPath"):
+                updated["target_path"] = resolved.get("targetPath")
+            return updated
+
+        return _node
+
+    def _inject_template_steps_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
+        def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            template_steps = [str(item).strip() for item in state.get("template_steps", []) if str(item).strip()]
+            if not template_steps:
+                return {"template_steps": []}
+            scenario = dict(state.get("scenario", {}))
+            original_steps = list(scenario.get("steps", []))
+            injected = [{"order": idx + 1, "text": step, "section": "template"} for idx, step in enumerate(template_steps)]
+            merged = injected + [
+                {
+                    "order": len(injected) + idx + 1,
+                    "text": str(item.get("text", "")),
+                    "section": item.get("section"),
+                }
+                for idx, item in enumerate(original_steps)
+                if isinstance(item, dict) and str(item.get("text", "")).strip()
+            ]
+            scenario["steps"] = merged
+            return {"scenario": scenario}
 
         return _node
 
@@ -272,6 +335,15 @@ class Orchestrator:
                     "details": {
                         "stepsSummary": state.get("feature", {}).get("stepsSummary"),
                         "language": state.get("feature", {}).get("meta", {}).get("language"),
+                    },
+                },
+                {
+                    "stage": "memory_rules",
+                    "status": "ok",
+                    "details": {
+                        "appliedRuleIds": list(state.get("applied_rule_ids", [])),
+                        "appliedTemplateIds": list(state.get("applied_template_ids", [])),
+                        "templateStepsAdded": len(state.get("template_steps", [])),
                     },
                 },
                 {
@@ -453,6 +525,9 @@ class Orchestrator:
             overwrite_existing=False,
             language=language,
             quality_policy=quality_policy,
+            explicit_quality_policy=quality_policy is not None,
+            explicit_language=language is not None,
+            explicit_target_path=False,
         )
 
     @staticmethod
@@ -481,6 +556,9 @@ class Orchestrator:
         zephyr_auth: dict[str, Any] | None = None,
         jira_instance: str | None = None,
         quality_policy: str | None = None,
+        explicit_quality_policy: bool = False,
+        explicit_language: bool = False,
+        explicit_target_path: bool = False,
     ) -> dict[str, Any]:
         logger.info("[Orchestrator] Generate feature for project %s", project_root)
         state = self._feature_graph.invoke(
@@ -494,6 +572,9 @@ class Orchestrator:
                 "overwrite_existing": overwrite_existing,
                 "language": language,
                 "quality_policy": normalize_quality_policy(quality_policy),
+                "explicit_quality_policy": explicit_quality_policy,
+                "explicit_language": explicit_language,
+                "explicit_target_path": explicit_target_path,
             }
         )
         scenario_dict = state.get("scenario", {})

@@ -20,7 +20,7 @@ from domain.models import (
 )
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
-from infrastructure.project_learning_store import ProjectLearningStore
+from memory import MemoryRepository, MemoryService
 from infrastructure.step_index_store import StepIndexStore
 from integrations.jira_testcase_provider import JiraTestcaseProvider
 from tools.cucumber_expression import cucumber_expression_to_regex
@@ -196,8 +196,8 @@ def create_orchestrator(settings: Settings | None = None):
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()
-    project_learning_store = ProjectLearningStore(
-        Path(resolved_settings.steps_index_dir).parent / "learning_memory"
+    memory_service = MemoryService(
+        MemoryRepository(Path(resolved_settings.steps_index_dir).parent / "learning_memory")
     )
 
     logger.debug("LLMClient и хранилища инициализированы")
@@ -210,7 +210,7 @@ def create_orchestrator(settings: Settings | None = None):
         step_index_store,
         embeddings_store,
         agent_llm_client,
-        project_learning_store=project_learning_store,
+        project_learning_store=memory_service,
         matcher_config=StepMatcherConfig(
             retrieval_top_k=resolved_settings.match_retrieval_top_k,
             candidate_pool=resolved_settings.match_candidate_pool,
@@ -234,7 +234,7 @@ def create_orchestrator(settings: Settings | None = None):
         feature_builder_agent=feature_generator,
         step_index_store=step_index_store,
         embeddings_store=embeddings_store,
-        project_learning_store=project_learning_store,
+        project_learning_store=memory_service,
         llm_client=llm_client,
         jira_testcase_provider=jira_testcase_provider,
     )

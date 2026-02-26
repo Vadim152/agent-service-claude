@@ -20,8 +20,17 @@ import ru.sber.aitestplugin.model.JobCreateRequestDto
 import ru.sber.aitestplugin.model.JobCreateResponseDto
 import ru.sber.aitestplugin.model.JobResultResponseDto
 import ru.sber.aitestplugin.model.JobStatusResponseDto
+import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
+import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
+import ru.sber.aitestplugin.model.GenerationRuleDto
+import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
+import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
+import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
+import ru.sber.aitestplugin.model.StepTemplateDto
+import ru.sber.aitestplugin.model.StepTemplateListResponseDto
+import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
 
 /**
  * Абстракция клиента, обращающегося к backend-сервису agent-service.
@@ -57,4 +66,20 @@ interface BackendClient {
     fun executeChatCommand(sessionId: String, request: ChatCommandRequestDto): ChatCommandResponseDto
 
     fun submitChatToolDecision(sessionId: String, request: ChatToolDecisionRequestDto): ChatToolDecisionResponseDto
+
+    fun listGenerationRules(projectRoot: String): GenerationRuleListResponseDto
+
+    fun createGenerationRule(request: GenerationRuleCreateRequestDto): GenerationRuleDto
+
+    fun updateGenerationRule(ruleId: String, request: GenerationRulePatchRequestDto): GenerationRuleDto
+
+    fun deleteGenerationRule(ruleId: String, projectRoot: String): DeleteMemoryItemResponseDto
+
+    fun listStepTemplates(projectRoot: String): StepTemplateListResponseDto
+
+    fun createStepTemplate(request: StepTemplateCreateRequestDto): StepTemplateDto
+
+    fun updateStepTemplate(templateId: String, request: StepTemplatePatchRequestDto): StepTemplateDto
+
+    fun deleteStepTemplate(templateId: String, projectRoot: String): DeleteMemoryItemResponseDto
 }

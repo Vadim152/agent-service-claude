@@ -34,9 +34,18 @@ import ru.sber.aitestplugin.model.JobCreateResponseDto
 import ru.sber.aitestplugin.model.JobEventResponseDto
 import ru.sber.aitestplugin.model.JobResultResponseDto
 import ru.sber.aitestplugin.model.JobStatusResponseDto
+import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
+import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
+import ru.sber.aitestplugin.model.GenerationRuleDto
+import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
+import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
+import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
+import ru.sber.aitestplugin.model.StepTemplateDto
+import ru.sber.aitestplugin.model.StepTemplateListResponseDto
+import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
 import java.net.URI
 import java.net.URLEncoder
 import com.fasterxml.jackson.databind.JsonNode
@@ -196,6 +205,38 @@ class HttpBackendClient(
         request: ChatToolDecisionRequestDto
     ): ChatToolDecisionResponseDto = post("/chat/sessions/$sessionId/tool-decisions", request)
 
+    override fun listGenerationRules(projectRoot: String): GenerationRuleListResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/memory/rules?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun createGenerationRule(request: GenerationRuleCreateRequestDto): GenerationRuleDto =
+        post("/memory/rules", request)
+
+    override fun updateGenerationRule(ruleId: String, request: GenerationRulePatchRequestDto): GenerationRuleDto =
+        patch("/memory/rules/$ruleId", request)
+
+    override fun deleteGenerationRule(ruleId: String, projectRoot: String): DeleteMemoryItemResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return delete("/memory/rules/$ruleId?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listStepTemplates(projectRoot: String): StepTemplateListResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/memory/templates?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun createStepTemplate(request: StepTemplateCreateRequestDto): StepTemplateDto =
+        post("/memory/templates", request)
+
+    override fun updateStepTemplate(templateId: String, request: StepTemplatePatchRequestDto): StepTemplateDto =
+        patch("/memory/templates/$templateId", request)
+
+    override fun deleteStepTemplate(templateId: String, projectRoot: String): DeleteMemoryItemResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return delete("/memory/templates/$templateId?projectRoot=$encodedProjectRoot")
+    }
+
     private inline fun <reified T : Any> post(
         path: String,
         payload: Any,
@@ -261,6 +302,78 @@ class HttpBackendClient(
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
 
+            return try {
+                mapper.readValue(responseBody)
+            } catch (ex: Exception) {
+                throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+            }
+        }
+    }
+
+    private inline fun <reified T : Any> patch(
+        path: String,
+        payload: Any,
+        timeoutMs: Int? = null
+    ): T {
+        val settings = settingsProvider()
+        val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
+        val client = getHttpClient(effectiveTimeoutMs)
+
+        val body = mapper.writeValueAsString(payload)
+        val requestBody = body.toByteArray(StandardCharsets.UTF_8).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
+            .header("Content-Type", "application/json")
+            .patch(requestBody)
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (ex: Exception) {
+            throw BackendException("Failed to call $url: ${ex.message}", ex)
+        }
+
+        response.use { httpResponse ->
+            val responseBody = httpResponse.body?.string().orEmpty()
+            if (!httpResponse.isSuccessful) {
+                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
+            }
+            return try {
+                mapper.readValue(responseBody)
+            } catch (ex: Exception) {
+                throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+            }
+        }
+    }
+
+    private inline fun <reified T : Any> delete(
+        path: String,
+        timeoutMs: Int? = null
+    ): T {
+        val settings = settingsProvider()
+        val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
+        val client = getHttpClient(effectiveTimeoutMs)
+
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
+            .delete()
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (ex: Exception) {
+            throw BackendException("Failed to call $url: ${ex.message}", ex)
+        }
+
+        response.use { httpResponse ->
+            val responseBody = httpResponse.body?.string().orEmpty()
+            if (!httpResponse.isSuccessful) {
+                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
+            }
             return try {
                 mapper.readValue(responseBody)
             } catch (ex: Exception) {

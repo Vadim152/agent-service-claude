@@ -1,115 +1,54 @@
-# agent-service
+﻿# agent-service
 
-`agent-service` - FastAPI backend для IDE-плагина и CLI/HTTP-клиентов.
+`agent-service` — FastAPI backend для IntelliJ-плагина и HTTP/CLI клиентов.
 
-Сервис покрывает:
-- сканирование и индексацию Cucumber-steps;
-- генерацию `.feature` в `jobs-first` режиме;
-- chat control-plane с SSE и workflow подтверждений;
-- tool/memory/llm endpoint'ы;
-- split-архитектуру Control Plane / Execution Plane / Tool Host.
+## Что умеет сервис
 
-Документация по IDE-плагину: `ide-plugin/README.md`.
+- Сканирование и индексация Cucumber step definitions.
+- Генерация `.feature` в `jobs-first` режиме.
+- Chat control-plane (sessions, status, history, SSE, approvals).
+- Memory layer (`MemoryService`) для:
+  - feedback по маппингу шагов,
+  - generation rules,
+  - step templates.
+- Split-режим: Control Plane / Execution Plane / Tool Host.
 
-## Состав репозитория
+Документация по плагину: `ide-plugin/README.md`.
 
-- `src/` - backend-код (`app`, `api`, `agents`, `chat`, `self_healing`, `infrastructure`).
-- `tests/` - pytest тесты API, startup и runtime-компонентов.
-- `ide-plugin/` - код IntelliJ-плагина.
-- `.agent/` - локальные runtime-данные (индексы, артефакты).
-- `.chroma/` - локальное vector-хранилище (если используется).
+## Структура репозитория
 
-## Архитектура
-
-```mermaid
-flowchart LR
-  subgraph Clients[Клиенты]
-    IDE[IDE Plugin]
-    CLI[CLI/HTTP]
-  end
-
-  subgraph CP[Control Plane (один сервис)]
-    API[FastAPI API<br/>Runs • Sessions • SSE/WS]
-    Policy[Tooling & Policy<br/>registry • approvals • audit]
-    RunDB[(Postgres<br/>runs/attempts/events/sessions)]
-    ArtIdx[(Artifacts index<br/>in DB)]
-  end
-
-  subgraph XP[Execution Plane]
-    Q[Queue (опционально)<br/>Redis/RabbitMQ]
-    W[Worker Pool<br/>(Executors)]
-    Orch[Orchestrator Runtime<br/>(LangGraph)]
-    RT[Runtime Plugins<br/>testgen • ift • debug • browser • analytics]
-  end
-
-  subgraph Tools[Tool Host (коннекторы)]
-    Repo[Repo/Code access]
-    Logs[Logs query]
-    Art[Artifacts store]
-    Browser[Playwright runner]
-    Analytics[Analytics query]
-    Patch[Patch proposal/apply]
-  end
-
-  subgraph Storage[Хранилища]
-    OBJ[(S3/MinIO/FS<br/>artifacts, traces, screenshots)]
-    VDB[(Vector store - опционально)]
-    LOGS[(Log backend - опционально)]
-    WARE[(Analytics warehouse - опционально)]
-  end
-
-  IDE --> API
-  CLI --> API
-
-  API --> RunDB
-  API --> Policy
-
-  API --> Q
-  Q --> W
-  W --> Orch
-  Orch --> RT
-
-  Orch --> Tools
-  Tools --> OBJ
-  Tools --> VDB
-  Tools --> LOGS
-  Tools --> WARE
-
-  Patch --> Policy
-  Art --> ArtIdx
-```
-
-Примечания по текущей реализации:
-- queue backend в коде: `local` или `redis`;
-- state backend: `memory` или `postgres`;
-- Tool Host: `local` или `remote` (`/internal/tools/save-feature`);
-- внешние хранилища (`S3`, `VDB`, `LOGS`, `WARE`) пока опциональны и подключаются по мере интеграций.
+- `src/` — backend-код (`app`, `api`, `agents`, `chat`, `memory`, `self_healing`, `infrastructure`).
+- `tests/` — pytest тесты.
+- `ide-plugin/` — IntelliJ plugin (Kotlin/Gradle).
+- `.agent/` — runtime данные (индексы, артефакты).
+- `.chroma/` — локальное vector storage (если используется).
 
 ## Режимы запуска
 
-### 1) Single-process (локальная разработка, по умолчанию)
+### 1. Single-process (по умолчанию)
 
-- `state_backend=memory`
-- `execution_backend=local`
-- `tool_host_mode=local`
+- `AGENT_SERVICE_STATE_BACKEND=memory`
+- `AGENT_SERVICE_EXECUTION_BACKEND=local`
+- `AGENT_SERVICE_TOOL_HOST_MODE=local`
 
-В этом режиме `POST /jobs` выполняется внутри процесса API.
+`POST /jobs` выполняется внутри процесса API.
 
-### 2) Split CP/XP/Tool Host (рекомендуемый production-путь)
+### 2. Split (production path)
 
 - Control Plane: `agent-service`
-- Execution Plane worker: `agent-service-worker`
+- Execution worker: `agent-service-worker`
 - Tool Host: `agent-service-tool-host`
-- Рекомендуемые backend'ы: `state_backend=postgres`, `execution_backend=queue`, `queue_backend=redis`, `tool_host_mode=remote`
+
+Рекомендуемые backend'ы:
+- `AGENT_SERVICE_STATE_BACKEND=postgres`
+- `AGENT_SERVICE_EXECUTION_BACKEND=queue`
+- `AGENT_SERVICE_QUEUE_BACKEND=redis`
+- `AGENT_SERVICE_TOOL_HOST_MODE=remote`
 
 ## Требования
 
 - Python `>=3.10`
 - PowerShell (или любой shell с эквивалентными командами)
-
-Опциональные зависимости по режимам:
-- `redis` - нужен для `AGENT_SERVICE_QUEUE_BACKEND=redis`;
-- `psycopg` - нужен для `AGENT_SERVICE_STATE_BACKEND=postgres`.
 
 ## Установка
 
@@ -122,7 +61,7 @@ python -m pip install -e .
 
 ## Запуск
 
-### Локальный single-process
+### Локально
 
 ```powershell
 agent-service
@@ -135,9 +74,7 @@ $env:PYTHONPATH="src"
 python -m app.main
 ```
 
-### Split: Control Plane + Worker + Tool Host
-
-Пример env:
+### Split: CP + Worker + Tool Host
 
 ```powershell
 $env:AGENT_SERVICE_STATE_BACKEND='postgres'
@@ -149,61 +86,42 @@ $env:AGENT_SERVICE_TOOL_HOST_MODE='remote'
 $env:AGENT_SERVICE_TOOL_HOST_URL='http://127.0.0.1:8001'
 ```
 
-Терминал 1 (Control Plane):
+Запуск процессов:
 
 ```powershell
 agent-service
-```
-
-Терминал 2 (Execution Plane worker):
-
-```powershell
 agent-service-worker
-```
-
-Терминал 3 (Tool Host):
-
-```powershell
 agent-service-tool-host
 ```
 
-Для тестового комбинированного режима можно включить встроенный worker:
-
-```powershell
-$env:AGENT_SERVICE_EXECUTION_BACKEND='queue'
-$env:AGENT_SERVICE_QUEUE_BACKEND='local'
-$env:AGENT_SERVICE_EMBEDDED_EXECUTION_WORKER='true'
-agent-service
-```
-
-## Readiness / Health
+## Health / Readiness
 
 ```powershell
 curl http://127.0.0.1:8000/health
 ```
 
-- во время startup: `503`, `status=initializing`;
-- после успешной инициализации: `200`, `status=ok`.
+- во время startup: `503`, `status=initializing`
+- после инициализации: `200`, `status=ok`
 
-## Базовый URL API
+## API Prefix
 
-Все внешние API-route'ы публикуются с префиксом `AGENT_SERVICE_API_PREFIX` (по умолчанию `/api/v1`).
+Все external endpoints публикуются с префиксом `AGENT_SERVICE_API_PREFIX` (по умолчанию `/api/v1`).
 
-Пример: `POST /jobs` доступен как `POST /api/v1/jobs`.
+Пример: `POST /jobs` -> `POST /api/v1/jobs`.
 
-## Обзор API
+## API Overview
 
 ### Steps API
 
 - `POST /steps/scan-steps`
 - `GET /steps/?projectRoot=...`
 
-### Feature API (legacy synchronous)
+### Feature API (legacy sync)
 
 - `POST /feature/generate-feature`
 - `POST /feature/apply-feature`
 
-### Jobs API (основной асинхронный путь)
+### Jobs API
 
 - `POST /jobs`
 - `GET /jobs/{job_id}`
@@ -224,124 +142,132 @@ curl http://127.0.0.1:8000/health
 - `POST /chat/sessions/{session_id}/commands`
 - `GET /chat/sessions/{session_id}/stream` (SSE)
 
-### Tools / Memory / LLM API
+### Tools API
 
 - `POST /tools/find-steps`
 - `POST /tools/compose-autotest`
 - `POST /tools/explain-unmapped`
+
+### Memory API
+
 - `POST /memory/feedback`
+- `GET /memory/rules?projectRoot=...`
+- `POST /memory/rules`
+- `PATCH /memory/rules/{rule_id}`
+- `DELETE /memory/rules/{rule_id}?projectRoot=...`
+- `GET /memory/templates?projectRoot=...`
+- `POST /memory/templates`
+- `PATCH /memory/templates/{template_id}`
+- `DELETE /memory/templates/{template_id}?projectRoot=...`
+- `POST /memory/resolve-preview`
+
+### LLM API
+
 - `POST /llm/test`
 
-### Tool Host internal API
+### Tool Host Internal API
 
-- `POST /internal/tools/save-feature` (`agent-service-tool-host`)
+- `POST /internal/tools/save-feature` (в `agent-service-tool-host`)
 
-## Jobs-first поток генерации
+## Memory rules & templates
 
-Основной сценарий:
-1. `POST /jobs` с `projectRoot`, `testCaseText`, профилем и опциями.
-2. Отслеживание статуса через `GET /jobs/{job_id}` или SSE `GET /jobs/{job_id}/events`.
-3. Получение результата через `GET /jobs/{job_id}/result`.
+- Правила и шаблоны хранятся на backend per `projectRoot`.
+- `GenerationRule` может задавать:
+  - `qualityPolicy`
+  - `language`
+  - `targetPathTemplate`
+  - `applyTemplates`
+- `StepTemplate` хранит готовые Gherkin шаги и может триггериться через `triggerRegex`.
+- Если срабатывает несколько шаблонов:
+  - применяются по `priority`,
+  - шаги дедуплицируются,
+  - шаги добавляются в начало `scenario.steps`.
+- В плагине доступен менеджер через кнопку `Memory` в header ToolWindow.
 
-Поведение:
-- до готовности результата `GET /jobs/{job_id}/result` вернет `409`;
-- поддерживается `Idempotency-Key` в `POST /jobs`:
-  - тот же ключ + тот же payload -> возвращается существующий `jobId`;
-  - тот же ключ + другой payload -> `409`.
+## Jobs-first поток
 
-Типичный lifecycle:
-- `queued -> running -> succeeded | needs_attention | cancelled`
-- при отмене возможен промежуточный `cancelling`.
+1. `POST /jobs` с `projectRoot`, `testCaseText`, параметрами генерации.
+2. Статус через `GET /jobs/{job_id}` или `GET /jobs/{job_id}/events`.
+3. Результат через `GET /jobs/{job_id}/result`.
 
-Attempt-level статусы:
-- `started`
-- `succeeded`
-- `failed`
-- `remediated`
-- `rerun_scheduled`
-- `cancelled`
+Особенности:
 
-## Ключевые переменные окружения
+- Пока результат не готов, `/jobs/{job_id}/result` возвращает `409`.
+- Поддерживается `Idempotency-Key`:
+  - тот же ключ + тот же payload -> возвращается существующий `jobId`
+  - тот же ключ + другой payload -> `409`
 
-### Базовые
+## Ключевые env переменные
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `AGENT_SERVICE_APP_NAME` | `agent-service` | Имя сервиса |
-| `AGENT_SERVICE_API_PREFIX` | `/api/v1` | Префикс API |
-| `AGENT_SERVICE_HOST` | `127.0.0.1` | Host bind |
-| `AGENT_SERVICE_PORT` | `8000` | Port bind |
-| `AGENT_SERVICE_LOG_REQUEST_BODIES` | `false` | Логировать body входящих запросов |
-| `AGENT_SERVICE_STEPS_INDEX_DIR` | `.agent/steps_index` | Каталог индекса шагов |
-| `AGENT_SERVICE_ARTIFACTS_DIR` | `.agent/artifacts` | Каталог job artifacts |
+### Core
 
-### Архитектура / Split
+- `AGENT_SERVICE_APP_NAME` (default: `agent-service`)
+- `AGENT_SERVICE_API_PREFIX` (default: `/api/v1`)
+- `AGENT_SERVICE_HOST` (default: `127.0.0.1`)
+- `AGENT_SERVICE_PORT` (default: `8000`)
+- `AGENT_SERVICE_LOG_REQUEST_BODIES` (default: `false`)
+- `AGENT_SERVICE_STEPS_INDEX_DIR` (default: `.agent/steps_index`)
+- `AGENT_SERVICE_ARTIFACTS_DIR` (default: `.agent/artifacts`)
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `AGENT_SERVICE_STATE_BACKEND` | `memory` | `memory` или `postgres` |
-| `AGENT_SERVICE_POSTGRES_DSN` | `null` | DSN Postgres (обязательно при `state_backend=postgres`) |
-| `AGENT_SERVICE_EXECUTION_BACKEND` | `local` | `local` или `queue` |
-| `AGENT_SERVICE_QUEUE_BACKEND` | `local` | `local` или `redis` |
-| `AGENT_SERVICE_QUEUE_NAME` | `agent-service:jobs` | Название очереди |
-| `AGENT_SERVICE_REDIS_URL` | `redis://127.0.0.1:6379/0` | URL Redis (нужен при `queue_backend=redis`) |
-| `AGENT_SERVICE_EMBEDDED_EXECUTION_WORKER` | `false` | Поднять worker внутри CP-процесса |
-| `AGENT_SERVICE_TOOL_HOST_MODE` | `local` | `local` или `remote` |
-| `AGENT_SERVICE_TOOL_HOST_URL` | `null` | Base URL remote Tool Host (обязательно при `tool_host_mode=remote`) |
+### Split/runtime
 
-### Jira / testcase source
+- `AGENT_SERVICE_STATE_BACKEND` (`memory|postgres`)
+- `AGENT_SERVICE_POSTGRES_DSN`
+- `AGENT_SERVICE_EXECUTION_BACKEND` (`local|queue`)
+- `AGENT_SERVICE_QUEUE_BACKEND` (`local|redis`)
+- `AGENT_SERVICE_QUEUE_NAME`
+- `AGENT_SERVICE_REDIS_URL`
+- `AGENT_SERVICE_EMBEDDED_EXECUTION_WORKER`
+- `AGENT_SERVICE_TOOL_HOST_MODE` (`local|remote`)
+- `AGENT_SERVICE_TOOL_HOST_URL`
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `AGENT_SERVICE_JIRA_SOURCE_MODE` | `stub` | Режим источника testcase (`stub/live/disabled`) |
-| `AGENT_SERVICE_JIRA_REQUEST_TIMEOUT_S` | `20` | HTTP timeout к Jira |
-| `AGENT_SERVICE_JIRA_DEFAULT_INSTANCE` | `https://jira.sberbank.ru` | Jira instance по умолчанию |
-| `AGENT_SERVICE_JIRA_VERIFY_SSL` | `true` | Проверка TLS Jira |
-| `AGENT_SERVICE_JIRA_CA_BUNDLE_FILE` | `null` | Кастомный CA bundle для Jira |
+### Jira source
 
-### LLM / GigaChat / Corp proxy
+- `AGENT_SERVICE_JIRA_SOURCE_MODE` (`stub|live|disabled`)
+- `AGENT_SERVICE_JIRA_REQUEST_TIMEOUT_S`
+- `AGENT_SERVICE_JIRA_DEFAULT_INSTANCE`
+- `AGENT_SERVICE_JIRA_VERIFY_SSL`
+- `AGENT_SERVICE_JIRA_CA_BUNDLE_FILE`
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `AGENT_SERVICE_LLM_ENDPOINT` | `null` | Endpoint внешнего LLM |
-| `AGENT_SERVICE_LLM_API_KEY` | `null` | API-ключ внешнего LLM |
-| `AGENT_SERVICE_LLM_MODEL` | `null` | Модель внешнего LLM |
-| `AGENT_SERVICE_LLM_API_VERSION` | `null` | Версия API внешнего LLM |
-| `GIGACHAT_CLIENT_ID` / `AGENT_SERVICE_GIGACHAT_CLIENT_ID` | `null` | OAuth client id |
-| `GIGACHAT_CLIENT_SECRET` / `AGENT_SERVICE_GIGACHAT_CLIENT_SECRET` | `null` | OAuth client secret |
-| `GIGACHAT_SCOPE` / `AGENT_SERVICE_GIGACHAT_SCOPE` | `GIGACHAT_API_PERS` | OAuth scope |
-| `GIGACHAT_AUTH_URL` / `AGENT_SERVICE_GIGACHAT_AUTH_URL` | `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` | OAuth endpoint |
-| `GIGACHAT_API_URL` / `AGENT_SERVICE_GIGACHAT_API_URL` | `https://gigachat.devices.sberbank.ru/api/v1` | API endpoint |
-| `GIGACHAT_VERIFY_SSL` / `AGENT_SERVICE_GIGACHAT_VERIFY_SSL` | `true` | Проверка TLS GigaChat |
-| `AGENT_SERVICE_CORP_MODE` | `false` | Включить corp proxy mode |
-| `AGENT_SERVICE_CORP_PROXY_HOST` | `null` | Хост прокси (`scheme + host`) |
-| `AGENT_SERVICE_CORP_PROXY_PATH` | `/sbe-ai-pdlc-integration-code-generator/v1/chat/proxy/completions` | Путь proxy endpoint |
-| `AGENT_SERVICE_CORP_MODEL` | `GigaChat-2-Max` | Модель в corp-режиме |
-| `AGENT_SERVICE_CORP_CERT_FILE` | `null` | Клиентский cert для mTLS |
-| `AGENT_SERVICE_CORP_KEY_FILE` | `null` | Клиентский key для mTLS |
-| `AGENT_SERVICE_CORP_CA_BUNDLE_FILE` | `null` | CA bundle для TLS |
-| `AGENT_SERVICE_CORP_REQUEST_TIMEOUT_S` | `30.0` | Timeout запросов к proxy |
-| `AGENT_SERVICE_CORP_RETRY_ATTEMPTS` | `3` | Количество retry |
-| `AGENT_SERVICE_CORP_RETRY_BASE_DELAY_S` | `0.5` | Базовая задержка retry |
-| `AGENT_SERVICE_CORP_RETRY_MAX_DELAY_S` | `4.0` | Максимальная задержка retry |
-| `AGENT_SERVICE_CORP_RETRY_JITTER_S` | `0.2` | Jitter retry |
+### LLM / GigaChat / Corp
 
-### Тюнинг matcher
+- `AGENT_SERVICE_LLM_ENDPOINT`
+- `AGENT_SERVICE_LLM_API_KEY`
+- `AGENT_SERVICE_LLM_MODEL`
+- `AGENT_SERVICE_LLM_API_VERSION`
+- `GIGACHAT_CLIENT_ID` / `AGENT_SERVICE_GIGACHAT_CLIENT_ID`
+- `GIGACHAT_CLIENT_SECRET` / `AGENT_SERVICE_GIGACHAT_CLIENT_SECRET`
+- `GIGACHAT_SCOPE` / `AGENT_SERVICE_GIGACHAT_SCOPE`
+- `GIGACHAT_AUTH_URL` / `AGENT_SERVICE_GIGACHAT_AUTH_URL`
+- `GIGACHAT_API_URL` / `AGENT_SERVICE_GIGACHAT_API_URL`
+- `GIGACHAT_VERIFY_SSL` / `AGENT_SERVICE_GIGACHAT_VERIFY_SSL`
+- `AGENT_SERVICE_CORP_MODE`
+- `AGENT_SERVICE_CORP_PROXY_HOST`
+- `AGENT_SERVICE_CORP_PROXY_PATH`
+- `AGENT_SERVICE_CORP_MODEL`
+- `AGENT_SERVICE_CORP_CERT_FILE`
+- `AGENT_SERVICE_CORP_KEY_FILE`
+- `AGENT_SERVICE_CORP_CA_BUNDLE_FILE`
+- `AGENT_SERVICE_CORP_REQUEST_TIMEOUT_S`
+- `AGENT_SERVICE_CORP_RETRY_ATTEMPTS`
+- `AGENT_SERVICE_CORP_RETRY_BASE_DELAY_S`
+- `AGENT_SERVICE_CORP_RETRY_MAX_DELAY_S`
+- `AGENT_SERVICE_CORP_RETRY_JITTER_S`
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `AGENT_SERVICE_MATCH_RETRIEVAL_TOP_K` | `50` | Top-K retrieval кандидатов |
-| `AGENT_SERVICE_MATCH_CANDIDATE_POOL` | `30` | Размер пула после префильтра |
-| `AGENT_SERVICE_MATCH_THRESHOLD_EXACT` | `0.8` | Порог exact |
-| `AGENT_SERVICE_MATCH_THRESHOLD_FUZZY` | `0.5` | Порог fuzzy |
-| `AGENT_SERVICE_MATCH_MIN_SEQ_FOR_EXACT` | `0.72` | Мин. seq score для exact |
-| `AGENT_SERVICE_MATCH_AMBIGUITY_GAP` | `0.08` | Порог неоднозначности top1-top2 |
-| `AGENT_SERVICE_MATCH_LLM_MIN_SCORE` | `0.45` | Нижняя граница зоны LLM rerank |
-| `AGENT_SERVICE_MATCH_LLM_MAX_SCORE` | `0.82` | Верхняя граница зоны LLM rerank |
-| `AGENT_SERVICE_MATCH_LLM_SHORTLIST` | `5` | Размер shortlist в LLM rerank |
-| `AGENT_SERVICE_MATCH_LLM_MIN_CONFIDENCE` | `0.7` | Мин. уверенность LLM rerank |
+### Matcher tuning
 
-## Проверка тестами
+- `AGENT_SERVICE_MATCH_RETRIEVAL_TOP_K`
+- `AGENT_SERVICE_MATCH_CANDIDATE_POOL`
+- `AGENT_SERVICE_MATCH_THRESHOLD_EXACT`
+- `AGENT_SERVICE_MATCH_THRESHOLD_FUZZY`
+- `AGENT_SERVICE_MATCH_MIN_SEQ_FOR_EXACT`
+- `AGENT_SERVICE_MATCH_AMBIGUITY_GAP`
+- `AGENT_SERVICE_MATCH_LLM_MIN_SCORE`
+- `AGENT_SERVICE_MATCH_LLM_MAX_SCORE`
+- `AGENT_SERVICE_MATCH_LLM_SHORTLIST`
+- `AGENT_SERVICE_MATCH_LLM_MIN_CONFIDENCE`
+
+## Тесты
 
 Полный прогон:
 
@@ -350,34 +276,30 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 python -m pytest -p no:cacheprovider
 ```
 
-Ключевые smoke-наборы:
+Smoke набор:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE='1'
-python -m pytest -p no:cacheprovider tests/test_jobs_api.py tests/test_chat_api.py tests/test_job_dispatcher.py tests/test_tool_host_split.py tests/test_startup_readiness.py
+python -m pytest -p no:cacheprovider tests/test_jobs_api.py tests/test_chat_api.py tests/test_memory_api.py tests/test_memory_rules_api.py tests/test_job_dispatcher.py tests/test_tool_host_split.py tests/test_startup_readiness.py
 ```
 
 ## Troubleshooting
 
 ### `Result is not ready` (`409`) на `/jobs/{job_id}/result`
 
-Job еще не в terminal-статусе. Используйте polling `/jobs/{job_id}` или SSE `/jobs/{job_id}/events`.
+Job еще не в terminal статусе. Используйте polling `/jobs/{job_id}` или SSE `/jobs/{job_id}/events`.
 
 ### `projectRoot is required` (`422`) на `/steps/scan-steps`
 
 Проверьте `projectRoot` в body/query и существование пути на диске.
 
-### Ошибка `Redis backend requires 'redis' package`
-
-Установите зависимость:
+### `Redis backend requires 'redis' package`
 
 ```powershell
 python -m pip install redis
 ```
 
-### Ошибка `Postgres backend requires 'psycopg' package`
-
-Установите зависимость:
+### `Postgres backend requires 'psycopg' package`
 
 ```powershell
 python -m pip install "psycopg[binary]"
@@ -385,5 +307,5 @@ python -m pip install "psycopg[binary]"
 
 ## Безопасность
 
-- Не коммитьте секреты: используйте `.env` и переменные `AGENT_SERVICE_*`.
-- Для TLS корпоративной сети используйте `*_CA_BUNDLE_FILE`, а не отключение SSL-проверки.
+- Не коммитьте секреты. Используйте `.env` и `AGENT_SERVICE_*`.
+- Для корпоративной TLS используйте `*_CA_BUNDLE_FILE` вместо отключения SSL проверки.

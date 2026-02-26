@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import Iterable
 
@@ -130,6 +131,14 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
             ),
         )
 
+    raw_payload_dict: dict[str, object] = {}
+    try:
+        loaded = json.loads(raw_body.decode("utf-8"))
+        if isinstance(loaded, dict):
+            raw_payload_dict = loaded
+    except Exception:
+        raw_payload_dict = {}
+
     try:
         request_model = GenerateFeatureRequest.model_validate_json(raw_body)
     except ValidationError as exc:  # pragma: no cover - форма валидируется FastAPI
@@ -199,6 +208,9 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         else None,
         jira_instance=request_model.jira_instance,
         quality_policy=request_model.quality_policy,
+        explicit_quality_policy="qualityPolicy" in raw_payload_dict,
+        explicit_language=bool(options and options.language is not None),
+        explicit_target_path=request_model.target_path is not None,
     )
 
     feature_payload = result.get("feature", {})

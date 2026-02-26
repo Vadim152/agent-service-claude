@@ -23,36 +23,36 @@
 
 ```mermaid
 flowchart LR
-  subgraph Clients[Clients]
-    IDE[IDE Plugin]
-    CLI[CLI/HTTP]
+  subgraph Clients["Clients"]
+    IDE["IDE Plugin"]
+    CLI["CLI or HTTP"]
   end
 
-  subgraph CP[Control Plane (agent-service)]
-    API[FastAPI API<br/>Jobs • Chat • Steps • Memory • Tools • Feature]
-    CHAT[Chat Runtime<br/>sessions • approvals • SSE]
-    DISP[Job Dispatcher<br/>local|queue]
-    STATE[(Run State Store<br/>memory|postgres)]
+  subgraph CP["Control Plane: agent-service"]
+    API["FastAPI API<br/>Jobs, Chat, Steps, Memory, Tools, Feature"]
+    CHAT["Chat Runtime<br/>sessions, approvals, SSE"]
+    DISP["Job Dispatcher<br/>local or queue"]
+    STATE[("Run State Store<br/>memory or postgres")]
   end
 
-  subgraph XP[Execution Plane]
-    Q[Queue (optional)<br/>local|redis]
-    W[Worker<br/>agent-service-worker]
-    SUP[ExecutionSupervisor]
-    ORCH[Orchestrator Runtime<br/>LangGraph]
+  subgraph XP["Execution Plane"]
+    Q["Queue optional<br/>local or redis"]
+    W["Worker<br/>agent-service-worker"]
+    SUP["ExecutionSupervisor"]
+    ORCH["Orchestrator Runtime<br/>LangGraph"]
   end
 
-  subgraph TH[Tool Host]
-    THL[Local Tool Host<br/>in-process apply_feature]
-    THR[Remote Tool Host<br/>agent-service-tool-host]
+  subgraph TH["Tool Host"]
+    THL["Local Tool Host<br/>in-process apply_feature"]
+    THR["Remote Tool Host<br/>agent-service-tool-host"]
   end
 
-  subgraph Storage[Storage]
-    ART[(.agent/artifacts<br/>artifact files + incidents)]
-    CM[(.agent/chat_memory<br/>sessions/project memory)]
-    VDB[(.chroma<br/>Chroma vector store)]
-    PG[(Postgres optional)]
-    R[(Redis optional)]
+  subgraph Storage["Storage"]
+    ART[(".agent/artifacts<br/>artifact files and incidents")]
+    CM[(".agent/chat_memory<br/>sessions and project memory")]
+    VDB[(".chroma<br/>Chroma vector store")]
+    PG[("Postgres optional")]
+    R[("Redis optional")]
   end
 
   IDE --> API
@@ -92,39 +92,39 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  subgraph Clients[Клиенты]
-    IDE[IDE Plugin]
-    CLI[CLI/HTTP]
+  subgraph Clients["Клиенты"]
+    IDE["IDE Plugin"]
+    CLI["CLI or HTTP"]
   end
 
-  subgraph CP[Control Plane (один сервис)]
-    API[FastAPI API<br/>Runs • Sessions • SSE/WS]
-    Policy[Tooling & Policy<br/>registry • approvals • audit]
-    RunDB[(Postgres<br/>runs/attempts/events/sessions)]
-    ArtIdx[(Artifacts index<br/>in DB)]
+  subgraph CP["Control Plane: один сервис"]
+    API["FastAPI API<br/>Runs, Sessions, SSE or WS"]
+    Policy["Tooling and Policy<br/>registry, approvals, audit"]
+    RunDB[("Postgres<br/>runs, attempts, events, sessions")]
+    ArtIdx[("Artifacts index<br/>in DB")]
   end
 
-  subgraph XP[Execution Plane]
-    Q[Queue (опционально)<br/>Redis/RabbitMQ]
-    W[Worker Pool<br/>(Executors)]
-    Orch[Orchestrator Runtime<br/>(LangGraph)]
-    RT[Runtime Plugins<br/>testgen • ift • debug • browser • analytics]
+  subgraph XP["Execution Plane"]
+    Q["Queue optional<br/>Redis or RabbitMQ"]
+    W["Worker Pool<br/>Executors"]
+    Orch["Orchestrator Runtime<br/>LangGraph"]
+    RT["Runtime Plugins<br/>testgen, ift, debug, browser, analytics"]
   end
 
-  subgraph Tools[Tool Host (коннекторы)]
-    Repo[Repo/Code access]
-    Logs[Logs query]
-    Art[Artifacts store]
-    Browser[Playwright runner]
-    Analytics[Analytics query]
-    Patch[Patch proposal/apply]
+  subgraph Tools["Tool Host: коннекторы"]
+    Repo["Repo and code access"]
+    Logs["Logs query"]
+    Art["Artifacts store"]
+    Browser["Playwright runner"]
+    Analytics["Analytics query"]
+    Patch["Patch proposal and apply"]
   end
 
-  subgraph Storage[Хранилища]
-    OBJ[(S3/MinIO/FS<br/>artifacts, traces, screenshots)]
-    VDB[(Vector store - опционально)]
-    LOGS[(Log backend - опционально)]
-    WARE[(Analytics warehouse - опционально)]
+  subgraph Storage["Хранилища"]
+    OBJ[("S3 or MinIO or FS<br/>artifacts, traces, screenshots")]
+    VDB[("Vector store optional")]
+    LOGS[("Log backend optional")]
+    WARE[("Analytics warehouse optional")]
   end
 
   IDE --> API

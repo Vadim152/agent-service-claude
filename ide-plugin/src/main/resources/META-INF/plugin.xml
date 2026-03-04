@@ -4,8 +4,8 @@
     <vendor email="ai-platform@sber.ru">Sber</vendor>
     <description>
         <![CDATA[
-        Skeleton plugin that integrates with the agent-service backend to scan Cucumber steps
-        and generate feature files from test cases.
+        IntelliJ plugin that integrates with the agent-service backend to chat with the agent,
+        scan Cucumber steps, and generate feature files from test cases.
         ]]>
     </description>
 

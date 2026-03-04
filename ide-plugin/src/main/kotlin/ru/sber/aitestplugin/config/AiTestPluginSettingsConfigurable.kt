@@ -15,37 +15,39 @@ import com.intellij.ui.JBSplitter
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
-import com.intellij.ui.components.JBPasswordField
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.UiStrings
+import ru.sber.aitestplugin.ui.components.SectionCard
 import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
+import ru.sber.aitestplugin.ui.theme.PluginUiTheme
+import ru.sber.aitestplugin.ui.theme.PluginUiTokens
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 import java.awt.BorderLayout
-import java.awt.Font
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.GridLayout
+import java.awt.Component
+import java.awt.FlowLayout
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Base64
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JComboBox
+import javax.swing.JEditorPane
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JRadioButton
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Base64
 
-/**
- * Панель настроек плагина (Settings/Preferences → Tools → "Агентум").
- */
 class AiTestPluginSettingsConfigurable(
     project: Project? = null,
     backendClient: BackendClient? = null
@@ -55,35 +57,35 @@ class AiTestPluginSettingsConfigurable(
     private val backendClient: BackendClient = backendClient ?: HttpBackendClient(this.project)
 
     private val projectRootField = JBTextField()
-    private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
-        foreground = JBColor(0x0B5CAD, 0x78A6FF)
-        background = JBColor(0xE8F1FF, 0x2C3F57)
-        border = JBUI.Borders.empty(6, 12)
+    private val scanButton = JButton(UiStrings.settingsScanButton, AllIcons.Actions.Search).apply {
+        foreground = PluginUiTheme.accentForeground
+        background = PluginUiTheme.accentBackground
         isOpaque = true
     }
     private val stepsList = JBList<StepDefinitionDto>()
-    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
+    private val statusLabel = JLabel(UiStrings.settingsIndexMissing, AllIcons.General.Information, JLabel.LEADING)
 
-    private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-    private val zephyrJiraLabel = JLabel("Jira:")
+    private val zephyrJiraLabel = JLabel(UiStrings.settingsJiraInstance)
     private val zephyrJiraInstanceCombo = JComboBox(jiraInstanceOptions.keys.toTypedArray())
-    private val zephyrTokenRadio = JRadioButton("Токен", true)
-    private val zephyrLoginRadio = JRadioButton("Логин/пароль")
-    private val zephyrTokenLabel = JLabel("Токен Jira:")
+    private val zephyrTokenRadio = JRadioButton(UiStrings.settingsAuthToken, true)
+    private val zephyrLoginRadio = JRadioButton(UiStrings.settingsAuthLoginPassword)
+    private val zephyrTokenLabel = JLabel(UiStrings.settingsJiraToken)
     private val zephyrTokenField = JBPasswordField()
-    private val zephyrLoginLabel = JLabel("Логин:")
+    private val zephyrLoginLabel = JLabel(UiStrings.settingsLogin)
     private val zephyrLoginField = JBTextField()
-    private val zephyrPasswordLabel = JLabel("Пароль:")
+    private val zephyrPasswordLabel = JLabel(UiStrings.settingsPassword)
     private val zephyrPasswordField = JBPasswordField()
-    private val addJiraProjectButton = JButton("Добавить проект Jira")
-    private val verifySettingsButton = JButton("Проверить настройки")
-    private val memoryButton = JButton("Открыть управление памятью")
+    private val addJiraProjectButton = JButton(UiStrings.settingsAddJiraProject)
+    private val verifySettingsButton = JButton(UiStrings.settingsVerify)
+    private val memoryButton = JButton(UiStrings.settingsOpenMemory)
     private val jiraProjectsPanel = JPanel()
     private val jiraProjects: MutableList<String> = mutableListOf()
 
+    private val rootPanel = JPanel(BorderLayout(0, PluginUiTokens.contentGap))
+
     constructor(project: Project) : this(project, HttpBackendClient(project))
 
-    override fun getDisplayName(): String = "Агентум"
+    override fun getDisplayName(): String = UiStrings.settingsTitle
 
     override fun createComponent(): JComponent {
         if (rootPanel.componentCount == 0) {
@@ -145,67 +147,46 @@ class AiTestPluginSettingsConfigurable(
     }
 
     private fun buildUi() {
-        val topPanel = createCardPanel().apply {
-            add(sectionLabel("Сканирование шагов"), BorderLayout.NORTH)
-            add(buildScanControls(), BorderLayout.CENTER)
-        }
-
-        val zephyrPanel = createCardPanel().apply {
-            add(sectionLabel("Zephyr"), BorderLayout.NORTH)
-            add(buildZephyrControls(), BorderLayout.CENTER)
-        }
-
-        val memoryPanel = createCardPanel().apply {
-            add(sectionLabel("Память"), BorderLayout.NORTH)
-            add(buildMemoryControls(), BorderLayout.CENTER)
-        }
-
-        stepsList.emptyText.text = "Шаги ещё не найдены"
+        rootPanel.background = PluginUiTheme.panelBackground
+        stepsList.emptyText.text = UiStrings.settingsStepsEmpty
         configureStepRenderer(stepsList)
 
-        val stepsPanel = createCardPanel().apply {
-            add(sectionLabel("Найденные шаги"), BorderLayout.NORTH)
-            add(JBScrollPane(stepsList), BorderLayout.CENTER)
+        val leftContent = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(PluginUiTokens.panelInsets)
+            add(SectionCard(UiStrings.settingsScanSection, UiStrings.settingsScanComment, buildScanControls()))
+            add(Box.createVerticalStrut(PluginUiTokens.contentGap))
+            add(SectionCard(UiStrings.settingsZephyrSection, UiStrings.settingsZephyrComment, buildZephyrControls()))
+            add(Box.createVerticalStrut(PluginUiTokens.contentGap))
+            add(SectionCard(UiStrings.settingsMemorySection, UiStrings.settingsMemoryComment, buildMemoryControls()))
+            add(Box.createVerticalGlue())
         }
 
-        val settingsPanel = JPanel(GridBagLayout()).apply {
-            background = JBColor.PanelBackground
-            val gbc = GridBagConstraints().apply {
-                gridx = 0
-                gridy = 0
-                weightx = 1.0
-                fill = GridBagConstraints.HORIZONTAL
-                anchor = GridBagConstraints.NORTHWEST
-                insets = JBUI.insetsBottom(12)
-            }
-            add(topPanel, gbc)
-            gbc.gridy++
-            gbc.insets = JBUI.emptyInsets()
-            add(zephyrPanel, gbc)
-            gbc.gridy++
-            gbc.insets = JBUI.insetsTop(12)
-            add(memoryPanel, gbc)
-            gbc.gridy++
-            gbc.weighty = 1.0
-            gbc.fill = GridBagConstraints.BOTH
-            add(JPanel(GridLayout()), gbc)
-        }
+        val stepsPanel = SectionCard(
+            UiStrings.settingsIndexedSteps,
+            UiStrings.settingsScanComment,
+            JBScrollPane(stepsList).apply { border = JBUI.Borders.empty() }
+        )
 
-        val mainSplitter = JBSplitter(true, 0.62f).apply {
-            firstComponent = JBScrollPane(settingsPanel).apply {
+        val mainSplitter = JBSplitter(true, 0.64f).apply {
+            firstComponent = JBScrollPane(leftContent).apply {
                 border = JBUI.Borders.empty()
-                horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
             }
-            secondComponent = stepsPanel
+            secondComponent = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(PluginUiTokens.panelInsets)
+                add(stepsPanel, BorderLayout.CENTER)
+            }
         }
 
         rootPanel.add(mainSplitter, BorderLayout.CENTER)
-        rootPanel.add(statusLabel, BorderLayout.SOUTH)
+        rootPanel.add(statusLabel.apply {
+            border = JBUI.Borders.empty(0, 12, 12, 12)
+        }, BorderLayout.SOUTH)
 
-        scanButton.addActionListener {
-            runScanSteps()
-        }
-
+        scanButton.addActionListener { runScanSteps() }
         ButtonGroup().apply {
             add(zephyrTokenRadio)
             add(zephyrLoginRadio)
@@ -215,16 +196,69 @@ class AiTestPluginSettingsConfigurable(
         addJiraProjectButton.addActionListener { promptAddJiraProject() }
         verifySettingsButton.addActionListener { verifyJiraProjectAvailability() }
         memoryButton.addActionListener { openMemoryManager() }
+
+        jiraProjectsPanel.layout = BoxLayout(jiraProjectsPanel, BoxLayout.Y_AXIS)
+        jiraProjectsPanel.isOpaque = false
+        refreshJiraProjects()
         updateZephyrAuthUi()
+    }
+
+    private fun buildScanControls(): JPanel = panel {
+        row(UiStrings.settingsProjectRoot) {
+            cell(projectRootField).align(AlignX.FILL).resizableColumn()
+            cell(scanButton)
+        }
+    }
+
+    private fun buildZephyrControls(): JPanel {
+        val authPanel = JPanel(FlowLayout(FlowLayout.LEFT, PluginUiTokens.blockGap, 0)).apply {
+            isOpaque = false
+            add(zephyrTokenRadio)
+            add(zephyrLoginRadio)
+        }
+        return panel {
+            row {
+                cell(zephyrJiraLabel)
+                cell(zephyrJiraInstanceCombo).resizableColumn().align(AlignX.FILL)
+            }
+            row(UiStrings.settingsAuthType) {
+                cell(authPanel).align(AlignX.FILL)
+            }
+            row {
+                cell(zephyrTokenLabel)
+                cell(zephyrTokenField).resizableColumn().align(AlignX.FILL)
+            }
+            row {
+                cell(zephyrLoginLabel)
+                cell(zephyrLoginField).resizableColumn().align(AlignX.FILL)
+            }
+            row {
+                cell(zephyrPasswordLabel)
+                cell(zephyrPasswordField).resizableColumn().align(AlignX.FILL)
+            }
+            row(UiStrings.settingsProjects) {
+                cell(jiraProjectsPanel).align(AlignX.FILL).resizableColumn()
+            }
+            row {
+                cell(addJiraProjectButton)
+                cell(verifySettingsButton)
+            }
+        }
+    }
+
+    private fun buildMemoryControls(): JPanel = panel {
+        row {
+            cell(memoryButton)
+        }
     }
 
     private fun loadIndexedSteps(projectRoot: String) {
         if (projectRoot.isBlank()) return
 
         statusLabel.icon = AllIcons.General.BalloonInformation
-        statusLabel.text = "Загрузка сохранённых шагов..."
+        statusLabel.text = UiStrings.settingsLoadingIndex
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Загрузка сохранённых шагов", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, UiStrings.settingsLoadingIndex, true) {
             private var responseSteps = emptyList<StepDefinitionDto>()
             private var statusMessage: String = ""
 
@@ -253,149 +287,6 @@ class AiTestPluginSettingsConfigurable(
         })
     }
 
-    private fun buildScanControls(): JPanel {
-        val panel = JPanel(GridBagLayout())
-        panel.background = JBColor.PanelBackground
-        val gbc = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            weightx = 0.0
-            fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insetsBottom(6)
-            anchor = GridBagConstraints.NORTHWEST
-        }
-
-        panel.add(JLabel("Корень проекта"), gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(projectRootField, gbc)
-
-        gbc.gridx++
-        gbc.weightx = 0.0
-        panel.add(scanButton, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.gridwidth = 3
-        val hint = JLabel("Укажите путь, который будет передан сервису сканирования.").apply {
-            font = font.deriveFont(Font.PLAIN, font.size2D - 1)
-            foreground = JBColor.GRAY
-        }
-        panel.add(hint, gbc)
-
-        return panel
-    }
-
-    private fun buildZephyrControls(): JPanel {
-        val panel = JPanel(GridBagLayout())
-        panel.background = JBColor.PanelBackground
-        val gbc = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            weightx = 0.0
-            fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insetsBottom(6)
-            anchor = GridBagConstraints.NORTHWEST
-        }
-
-        panel.add(zephyrJiraLabel, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(zephyrJiraInstanceCombo, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(JLabel(""), gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        val authPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-            background = JBColor.PanelBackground
-            add(zephyrTokenRadio)
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(zephyrLoginRadio)
-        }
-        panel.add(authPanel, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(zephyrTokenLabel, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(zephyrTokenField, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(JLabel(""), gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(addJiraProjectButton, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(zephyrLoginLabel, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(zephyrLoginField, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(zephyrPasswordLabel, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(zephyrPasswordField, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(JLabel("Проект Jira:"), gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        jiraProjectsPanel.layout = BoxLayout(jiraProjectsPanel, BoxLayout.Y_AXIS)
-        jiraProjectsPanel.background = JBColor.PanelBackground
-        panel.add(jiraProjectsPanel, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(verifySettingsButton, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(JPanel().apply { background = JBColor.PanelBackground }, gbc)
-
-        refreshJiraProjects()
-        return panel
-    }
-
-    private fun buildMemoryControls(): JPanel = JPanel(GridBagLayout()).apply {
-        background = JBColor.PanelBackground
-        val gbc = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            weightx = 1.0
-            fill = GridBagConstraints.HORIZONTAL
-            anchor = GridBagConstraints.NORTHWEST
-            insets = JBUI.insetsBottom(6)
-        }
-
-        add(
-            JLabel("Управление правилами и шаблонами памяти проекта.").apply {
-                font = font.deriveFont(Font.PLAIN, font.size2D - 1)
-                foreground = JBColor.GRAY
-            },
-            gbc
-        )
-
-        gbc.gridy++
-        gbc.weightx = 0.0
-        add(memoryButton, gbc)
-    }
-
     private fun resolveMemoryProjectRoot(): String {
         return resolveMemoryProjectRootValue(
             preferredRoot = projectRootField.text.trim(),
@@ -410,7 +301,7 @@ class AiTestPluginSettingsConfigurable(
             Messages.showWarningDialog(
                 project,
                 "Не удалось определить корень проекта. Укажите путь в разделе сканирования.",
-                "Память"
+                UiStrings.settingsMemorySection
             )
             return
         }
@@ -429,8 +320,8 @@ class AiTestPluginSettingsConfigurable(
     private fun promptAddJiraProject() {
         val projectKey = Messages.showInputDialog(
             rootPanel,
-            "Введите ключ Jira проекта",
-            "Добавить Jira проект",
+            "Введите ключ Jira-проекта",
+            UiStrings.settingsAddJiraProject,
             Messages.getQuestionIcon()
         )?.trim().orEmpty()
         if (projectKey.isBlank()) return
@@ -446,46 +337,49 @@ class AiTestPluginSettingsConfigurable(
         jiraProjectsPanel.removeAll()
         if (jiraProjects.isEmpty()) {
             jiraProjectsPanel.add(JLabel("Список проектов пуст").apply {
-                font = font.deriveFont(Font.PLAIN, font.size2D - 1)
-                foreground = JBColor.GRAY
+                foreground = PluginUiTheme.secondaryText
+                alignmentX = Component.LEFT_ALIGNMENT
             })
         } else {
             jiraProjects.forEach { project ->
-                jiraProjectsPanel.add(createProjectRow(project))
-                jiraProjectsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+                createProjectRow(project).also {
+                    it.alignmentX = Component.LEFT_ALIGNMENT
+                    jiraProjectsPanel.add(it)
+                }
+                jiraProjectsPanel.add(Box.createVerticalStrut(PluginUiTokens.blockGap))
             }
         }
         jiraProjectsPanel.revalidate()
         jiraProjectsPanel.repaint()
     }
 
-    private fun createProjectRow(projectKey: String): JPanel = JPanel().apply {
-        layout = BoxLayout(this, BoxLayout.X_AXIS)
-        background = JBColor.PanelBackground
-        val projectField = JBTextField(projectKey).apply {
+    private fun createProjectRow(projectKey: String): JPanel = JPanel(BorderLayout(PluginUiTokens.blockGap, 0)).apply {
+        isOpaque = false
+        add(JEditorPane().apply {
+            contentType = "text/plain"
+            text = projectKey
             isEditable = false
-        }
-        val deleteButton = JButton("Удалить").apply {
+            background = PluginUiTheme.inputBackground
+            border = JBUI.Borders.empty(6, 8)
+        }, BorderLayout.CENTER)
+        add(JButton("Удалить").apply {
             addActionListener {
                 jiraProjects.remove(projectKey)
                 refreshJiraProjects()
             }
-        }
-        add(projectField)
-        add(Box.createHorizontalStrut(JBUI.scale(8)))
-        add(deleteButton)
+        }, BorderLayout.EAST)
     }
 
     private fun verifyJiraProjectAvailability() {
         val jiraInstanceName = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
         val jiraBaseUrl = jiraInstanceOptions[jiraInstanceName]
         if (jiraBaseUrl.isNullOrBlank()) {
-            notify("Не выбран Jira инстанс", NotificationType.WARNING)
+            notify("Не выбран Jira-инстанс", NotificationType.WARNING)
             return
         }
         val projectKey = jiraProjects.firstOrNull()?.trim().orEmpty()
         if (projectKey.isBlank()) {
-            notify("Добавьте Jira проект для проверки", NotificationType.WARNING)
+            notify("Добавьте Jira-проект для проверки", NotificationType.WARNING)
             return
         }
         val tokenSelected = zephyrTokenRadio.isSelected
@@ -501,7 +395,7 @@ class AiTestPluginSettingsConfigurable(
             return
         }
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Проверка Jira проекта", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Проверка Jira-проекта", true) {
             private var statusMessage: String = ""
 
             override fun run(indicator: ProgressIndicator) {
@@ -577,7 +471,7 @@ class AiTestPluginSettingsConfigurable(
                 val response = backendClient.scanSteps(projectRoot, additionalRoots)
                 responseSteps = response.sampleSteps.orEmpty()
                 responseUnmapped = response.unmappedSteps
-                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", неотображённых: ${responseUnmapped.size}"
+                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", несопоставленных: ${responseUnmapped.size}"
                 statusMessage = "Найдено ${response.stepsCount} шагов$unmappedMessage • Обновлено ${response.updatedAt}"
             }
 
@@ -617,7 +511,7 @@ class AiTestPluginSettingsConfigurable(
                     append(" [$signature]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
                 value.summary?.takeIf { it.isNotBlank() }?.let {
-                    append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    append(" | $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
             }
         }
@@ -625,22 +519,15 @@ class AiTestPluginSettingsConfigurable(
 
     private fun notify(message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("Агентум")
+            .getNotificationGroup(UiStrings.pluginName)
             .createNotification(message, type)
             .notify(project)
     }
 
-    private fun sectionLabel(text: String): JLabel = JLabel(text).apply {
-        font = font.deriveFont(Font.BOLD, font.size2D + 1)
-        border = JBUI.Borders.emptyBottom(6)
-    }
+    private fun resolveJiraInstanceUrl(label: String): String? = jiraInstanceOptions[label] ?: label.takeIf { it.isNotBlank() }
 
-    private fun createCardPanel(): JPanel = JPanel(BorderLayout()).apply {
-        background = JBColor.PanelBackground
-        border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(12)
-        )
+    private fun resolveJiraInstanceLabel(url: String): String {
+        return jiraInstanceOptions.entries.firstOrNull { it.value == url }?.key ?: url.ifBlank { jiraInstanceOptions.keys.first() }
     }
 
     companion object {
@@ -659,6 +546,3 @@ internal fun resolveMemoryProjectRootValue(
         .ifEmpty { scanProjectRoot.orEmpty().trim() }
         .ifEmpty { projectBasePath.orEmpty().trim() }
 }
-
-
-

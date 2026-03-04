@@ -5,23 +5,20 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.Align
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
 import ru.sber.aitestplugin.services.BackendClient
-import java.awt.Font
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
+import ru.sber.aitestplugin.ui.UiStrings
 import javax.swing.JButton
 import javax.swing.JComponent
-import javax.swing.JLabel
-import javax.swing.JPanel
 
-/**
- * Dialog for feature generation options plus memory preview.
- */
 class GenerateFeatureDialog(
     project: Project,
     defaults: GenerateFeatureDialogOptions,
@@ -30,16 +27,10 @@ class GenerateFeatureDialog(
     private val testCaseText: String
 ) : DialogWrapper(project) {
     private val targetPathField = JBTextField(defaults.targetPath ?: "")
-    private val createFileCheckbox = JBCheckBox("Create file if it does not exist", defaults.createFile).apply {
-        toolTipText = "If the target path is missing, the plugin will create a new feature file"
-        border = JBUI.Borders.emptyLeft(2)
-    }
-    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting).apply {
-        toolTipText = "Overwrite the target feature file when it already exists"
-        border = JBUI.Borders.emptyLeft(2)
-    }
+    private val createFileCheckbox = JBCheckBox(UiStrings.dialogCreateFile, defaults.createFile)
+    private val overwriteCheckbox = JBCheckBox(UiStrings.dialogOverwriteFile, defaults.overwriteExisting)
     private val defaultLanguage = defaults.language
-    private val memoryStatusLabel = JLabel("Loading memory preview...")
+    private val memoryStatusLabel = javax.swing.JLabel(UiStrings.dialogLoadingPreview)
     private val memoryPreviewArea = JBTextArea().apply {
         isEditable = false
         lineWrap = true
@@ -47,61 +38,26 @@ class GenerateFeatureDialog(
         border = JBUI.Borders.empty(8)
         background = JBColor.PanelBackground
         foreground = JBColor.foreground()
-        font = font.deriveFont(Font.PLAIN, font.size2D)
-        rows = 7
+        rows = 8
     }
-    private val refreshPreviewButton = JButton("Refresh Preview")
+    private val refreshPreviewButton = JButton(UiStrings.dialogRefreshPreview)
     private var latestPreview: GenerationResolvePreviewResponseDto? = null
 
     init {
-        title = "Generate Feature"
+        title = UiStrings.generateFeatureTitle
+        refreshPreviewButton.addActionListener { loadMemoryPreviewAsync() }
         init()
         loadMemoryPreviewAsync()
     }
 
-    override fun createCenterPanel(): JComponent {
-        val panel = JPanel(GridBagLayout())
-        panel.border = JBUI.Borders.empty(8)
-
-        val gbc = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            anchor = GridBagConstraints.WEST
-            fill = GridBagConstraints.HORIZONTAL
-            weightx = 1.0
-            ipadx = 4
-            ipady = 4
-            insets = JBUI.insetsBottom(8)
-        }
-
-        panel.add(JLabel("Target path (relative to project root)"), gbc)
-        gbc.gridy++
-        panel.add(targetPathField, gbc)
-
-        gbc.gridy++
-        panel.add(hintLabel("Example: src/test/resources/features/generated"), gbc)
-
-        gbc.gridy++
-        panel.add(createFileCheckbox, gbc)
-
-        gbc.gridy++
-        panel.add(overwriteCheckbox, gbc)
-
-        gbc.gridy++
-        panel.add(sectionLabel("Memory Preview"), gbc)
-
-        gbc.gridy++
-        panel.add(memoryStatusLabel, gbc)
-
-        gbc.gridy++
-        panel.add(memoryPreviewArea, gbc)
-
-        gbc.gridy++
-        gbc.weightx = 0.0
-        panel.add(refreshPreviewButton.apply { addActionListener { loadMemoryPreviewAsync() } }, gbc)
-
-        return panel
-    }
+    override fun createCenterPanel(): JComponent = buildGenerateFeatureFormPanel(
+        targetPathField = targetPathField,
+        createFileCheckbox = createFileCheckbox,
+        overwriteCheckbox = overwriteCheckbox,
+        memoryStatusLabel = memoryStatusLabel,
+        memoryPreviewArea = memoryPreviewArea,
+        refreshPreviewButton = refreshPreviewButton,
+    )
 
     fun targetPath(): String? = targetPathField.text.trim().takeIf { it.isNotEmpty() }
 
@@ -117,7 +73,7 @@ class GenerateFeatureDialog(
     )
 
     private fun loadMemoryPreviewAsync() {
-        memoryStatusLabel.text = "Loading memory preview..."
+        memoryStatusLabel.text = UiStrings.dialogLoadingPreview
         memoryPreviewArea.text = ""
         refreshPreviewButton.isEnabled = false
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -143,24 +99,51 @@ class GenerateFeatureDialog(
                     ApplicationManager.getApplication().invokeLater {
                         refreshPreviewButton.isEnabled = true
                         latestPreview = null
-                        memoryStatusLabel.text = "Memory preview unavailable"
+                        memoryStatusLabel.text = UiStrings.dialogPreviewUnavailable
                         memoryPreviewArea.text = ex.message?.trim().takeUnless { it.isNullOrBlank() }
-                            ?: "The backend did not return memory preview data. Generation can continue without it."
+                            ?: "Backend не вернул данные предпросмотра. Генерацию можно продолжить без них."
                     }
                 }
         }
     }
 
-    private fun hintLabel(text: String): JLabel = JLabel(text).apply {
-        border = JBUI.Borders.emptyLeft(2)
-    }
-
-    private fun sectionLabel(text: String): JLabel = JLabel(text).apply {
-        font = font.deriveFont(Font.BOLD)
-    }
-
     companion object {
         private const val DEFAULT_QUALITY_POLICY = "strict"
+    }
+}
+
+internal fun buildGenerateFeatureFormPanel(
+    targetPathField: JBTextField,
+    createFileCheckbox: JBCheckBox,
+    overwriteCheckbox: JBCheckBox,
+    memoryStatusLabel: javax.swing.JLabel,
+    memoryPreviewArea: JBTextArea,
+    refreshPreviewButton: JButton,
+): JComponent = panel {
+    row(UiStrings.dialogTargetPath) {
+        cell(targetPathField).resizableColumn().align(AlignX.FILL)
+    }
+    row {
+        comment(UiStrings.dialogTargetPathComment)
+    }
+    row {
+        cell(createFileCheckbox)
+    }
+    row {
+        cell(overwriteCheckbox)
+    }
+    group(UiStrings.dialogMemoryPreview) {
+        row {
+            cell(memoryStatusLabel)
+        }
+        row {
+            cell(JBScrollPane(memoryPreviewArea))
+                .resizableColumn()
+                .align(Align.FILL)
+        }
+        row {
+            cell(refreshPreviewButton)
+        }
     }
 }
 
@@ -173,28 +156,28 @@ internal fun buildMemoryPreviewStatus(preview: GenerationResolvePreviewResponseD
         preview.qualityPolicy.isNullOrBlank() &&
         preview.language.isNullOrBlank()
     ) {
-        return "No memory rules matched this test case."
+        return "Правила памяти не сработали для этого тест-кейса."
     }
-    return "Memory rules will be applied automatically."
+    return "Правила памяти будут применены автоматически."
 }
 
 internal fun formatMemoryPreview(preview: GenerationResolvePreviewResponseDto): String {
     val lines = mutableListOf<String>()
-    lines += "Matched rules: ${preview.appliedRuleIds.size}"
-    lines += "Matched templates: ${preview.appliedTemplateIds.size}"
-    lines += "Template steps to inject: ${preview.templateSteps.size}"
-    preview.qualityPolicy?.takeIf { it.isNotBlank() }?.let { lines += "Effective quality policy: $it" }
-    preview.language?.takeIf { it.isNotBlank() }?.let { lines += "Effective language: $it" }
-    preview.targetPath?.takeIf { it.isNotBlank() }?.let { lines += "Suggested target path: $it" }
+    lines += "Совпавших правил: ${preview.appliedRuleIds.size}"
+    lines += "Совпавших шаблонов: ${preview.appliedTemplateIds.size}"
+    lines += "Шагов для вставки: ${preview.templateSteps.size}"
+    preview.qualityPolicy?.takeIf { it.isNotBlank() }?.let { lines += "Итоговая quality policy: $it" }
+    preview.language?.takeIf { it.isNotBlank() }?.let { lines += "Итоговый язык: $it" }
+    preview.targetPath?.takeIf { it.isNotBlank() }?.let { lines += "Рекомендуемый путь: $it" }
     if (preview.templateSteps.isNotEmpty()) {
         lines += ""
-        lines += "Injected steps:"
+        lines += "Будут добавлены шаги:"
         preview.templateSteps.forEachIndexed { index, step ->
             lines += "${index + 1}. $step"
         }
     } else {
         lines += ""
-        lines += "No template steps will be injected."
+        lines += "Шаблонные шаги не будут добавлены."
     }
     return lines.joinToString("\n")
 }

@@ -11,9 +11,9 @@ class MemoryPreviewFormattingTest {
     fun `reports when memory preview is empty`() {
         val preview = GenerationResolvePreviewResponseDto(projectRoot = "C:/repo")
 
-        assertEquals("No memory rules matched this test case.", buildMemoryPreviewStatus(preview))
-        assertTrue(formatMemoryPreview(preview).contains("Matched rules: 0"))
-        assertTrue(formatMemoryPreview(preview).contains("No template steps will be injected."))
+        assertEquals("Правила памяти не сработали для этого тест-кейса.", buildMemoryPreviewStatus(preview))
+        assertTrue(formatMemoryPreview(preview).contains("Совпавших правил: 0"))
+        assertTrue(formatMemoryPreview(preview).contains("Шаблонные шаги не будут добавлены."))
     }
 
     @Test
@@ -30,11 +30,11 @@ class MemoryPreviewFormattingTest {
 
         val rendered = formatMemoryPreview(preview)
 
-        assertEquals("Memory rules will be applied automatically.", buildMemoryPreviewStatus(preview))
-        assertTrue(rendered.contains("Matched rules: 2"))
-        assertTrue(rendered.contains("Matched templates: 1"))
-        assertTrue(rendered.contains("Effective quality policy: balanced"))
-        assertTrue(rendered.contains("Suggested target path: src/test/resources/features/auth.feature"))
+        assertEquals("Правила памяти будут применены автоматически.", buildMemoryPreviewStatus(preview))
+        assertTrue(rendered.contains("Совпавших правил: 2"))
+        assertTrue(rendered.contains("Совпавших шаблонов: 1"))
+        assertTrue(rendered.contains("Итоговая quality policy: balanced"))
+        assertTrue(rendered.contains("Рекомендуемый путь: src/test/resources/features/auth.feature"))
         assertTrue(rendered.contains("1. Given user is authorized"))
     }
 }

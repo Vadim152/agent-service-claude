@@ -1,4 +1,4 @@
-package ru.sber.aitestplugin.ui.toolwindow
+﻿package ru.sber.aitestplugin.ui.toolwindow
 
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
@@ -46,6 +46,14 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.UiStrings
+import ru.sber.aitestplugin.ui.components.StatusBadge
+import ru.sber.aitestplugin.ui.theme.PluginUiTheme
+import ru.sber.aitestplugin.ui.theme.PluginUiTokens
+import ru.sber.aitestplugin.ui.toolwindow.components.ChatComposerPanel
+import ru.sber.aitestplugin.ui.toolwindow.components.HistoryPanel
+import ru.sber.aitestplugin.ui.toolwindow.components.RunDetailsPanel
+import ru.sber.aitestplugin.ui.toolwindow.components.ToolWindowHeaderPanel
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -115,7 +123,7 @@ class AiToolWindowPanel(
         )
     )
     private val sseIndexPattern = Regex("\"index\"\\s*:\\s*(\\d+)")
-    private val theme = UiTheme()
+    private val theme = PluginUiTheme
 
     private val cardLayout = CardLayout()
     private val bodyCards = JPanel(cardLayout)
@@ -142,7 +150,7 @@ class AiToolWindowPanel(
         foreground = theme.primaryText
         caretColor = theme.primaryText
         border = JBUI.Borders.empty(8, 10)
-        text = "Artifacts and logs will appear here for Agent runs."
+        text = UiStrings.runArtifactsPlaceholder
     }
     private val runArtifactsPanel = JPanel(BorderLayout()).apply {
         isOpaque = true
@@ -164,7 +172,7 @@ class AiToolWindowPanel(
         foreground = theme.primaryText
         caretColor = theme.primaryText
         border = JBUI.Borders.empty(8, 10)
-        text = "Live run activity will appear here for Agent runs."
+        text = UiStrings.runEventsPlaceholder
     }
     private val runEventsPanel = JPanel(BorderLayout()).apply {
         isOpaque = true
@@ -185,7 +193,8 @@ class AiToolWindowPanel(
         isVisible = false
         add(runInfoLabel, BorderLayout.CENTER)
     }
-    private val statusLabel = JBLabel("Подключение...")
+    private val statusLabel = JBLabel(UiStrings.connecting)
+    private val statusBadge = StatusBadge(UiStrings.connecting, false)
 
     private val approvalPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -278,42 +287,21 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun buildHeader(): JPanel {
-        return JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(0, 2, 8, 2)
-            add(JBLabel(ToolWindowIds.DISPLAY_NAME).apply {
-                font = font.deriveFont(Font.BOLD, 16f)
-                foreground = theme.primaryText
-            }, BorderLayout.WEST)
-            add(
-                JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
-                    isOpaque = false
-                    add(headerButton("+") { ensureSessionAsync(forceNew = true) })
-                    add(headerButton("История") {
-                        showHistoryScreen()
-                        loadSessionsHistoryAsync()
-                    })
-                    add(JButton(AllIcons.General.Settings).apply {
-                        toolTipText = "Настройки"
-                        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                        foreground = theme.primaryText
-                        background = theme.controlBackground
-                        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
-                        isContentAreaFilled = true
-                        isFocusPainted = false
-                        addActionListener {
-                            ShowSettingsUtil.getInstance().showSettingsDialog(
-                                project,
-                                AiTestPluginSettingsConfigurable::class.java
-                            )
-                        }
-                    })
-                },
-                BorderLayout.EAST
+    private fun buildHeader(): JPanel = ToolWindowHeaderPanel(
+        title = ToolWindowIds.DISPLAY_NAME,
+        statusComponent = statusBadge,
+        onNewSession = { ensureSessionAsync(forceNew = true) },
+        onShowHistory = {
+            showHistoryScreen()
+            loadSessionsHistoryAsync()
+        },
+        onOpenSettings = {
+            ShowSettingsUtil.getInstance().showSettingsDialog(
+                project,
+                AiTestPluginSettingsConfigurable::class.java
             )
         }
-    }
+    )
 
     private fun buildBody(): JPanel {
         bodyCards.isOpaque = false
@@ -328,21 +316,9 @@ class AiToolWindowPanel(
             isOpaque = false
             add(timelineContainer, BorderLayout.NORTH)
         }
-        val footer = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        val footer = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(runInfoPanel)
-            add(JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.emptyTop(6)
-                add(runEventsPanel, BorderLayout.CENTER)
-            })
-            add(JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.emptyTop(6)
-                add(runArtifactsPanel, BorderLayout.CENTER)
-            })
-            add(approvalPanel)
+            add(RunDetailsPanel(runInfoPanel, runEventsPanel, runArtifactsPanel, approvalPanel), BorderLayout.CENTER)
         }
         configureRunEventsPanel()
         configureRunArtifactsPanel()
@@ -357,7 +333,7 @@ class AiToolWindowPanel(
                 )
                 background = theme.panelBackground
                 viewport.background = theme.panelBackground
-                preferredSize = Dimension(100, 360)
+                preferredSize = Dimension(100, PluginUiTokens.toolWindowMinTimelineHeight)
                 viewport.addComponentListener(object : java.awt.event.ComponentAdapter() {
                     override fun componentResized(e: java.awt.event.ComponentEvent?) {
                         renderTimeline()
@@ -375,7 +351,7 @@ class AiToolWindowPanel(
         historyList.foreground = theme.primaryText
         historyList.selectionBackground = theme.controlBackground
         historyList.selectionForeground = theme.primaryText
-        historyList.emptyText.text = "Пока нет чатов"
+        historyList.emptyText.text = UiStrings.noChatsYet
         historyList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount >= 2) {
@@ -384,43 +360,11 @@ class AiToolWindowPanel(
             }
         })
 
-        val root = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    add(JButton("Назад").apply {
-                        foreground = theme.primaryText
-                        background = theme.controlBackground
-                        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
-                        isContentAreaFilled = true
-                        isFocusPainted = false
-                        addActionListener { showChatScreen() }
-                    }, BorderLayout.WEST)
-                    add(JBLabel("История").apply { foreground = theme.primaryText }, BorderLayout.CENTER)
-                },
-                BorderLayout.NORTH
-            )
-            add(JBScrollPane(historyList).apply {
-                border = JBUI.Borders.compound(
-                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
-                    JBUI.Borders.empty(2)
-                )
-                viewport.background = theme.containerBackground
-            }, BorderLayout.CENTER)
-            add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
-                isOpaque = false
-                add(JButton("Открыть чат").apply {
-                    foreground = theme.primaryText
-                    background = theme.controlBackground
-                    border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
-                    isContentAreaFilled = true
-                    isFocusPainted = false
-                    addActionListener { historyList.selectedValue?.let { activateSession(it) } }
-                })
-            }, BorderLayout.SOUTH)
-        }
-        return root
+        return HistoryPanel(
+            historyList = historyList,
+            onBack = { showChatScreen() },
+            onOpenSelected = { historyList.selectedValue?.let { activateSession(it) } }
+        )
     }
 
     private fun buildInput(): JPanel {
@@ -431,7 +375,7 @@ class AiToolWindowPanel(
         inputArea.caretColor = theme.primaryText
         inputArea.border = JBUI.Borders.empty(4, 6)
         inputArea.font = inputArea.font.deriveFont(14f)
-        inputArea.putClientProperty("JTextArea.placeholderText", "Введите / для шаблонов, # для промптов или @ для контекста")
+        inputArea.putClientProperty("JTextArea.placeholderText", UiStrings.chatInputPlaceholder)
         inputArea.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
             override fun removeUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
@@ -456,7 +400,7 @@ class AiToolWindowPanel(
         updateSendButtonState()
 
         runtimeSelector.selectedItem = selectedRuntime
-        runtimeSelector.toolTipText = "Runtime"
+        runtimeSelector.toolTipText = UiStrings.runtimeLabel
         runtimeSelector.background = theme.controlBackground
         runtimeSelector.foreground = theme.primaryText
         runtimeSelector.border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
@@ -475,60 +419,9 @@ class AiToolWindowPanel(
             ensureSessionAsync(forceNew = false)
         }
 
-        return JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyTop(8)
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = true
-                    background = theme.inputBackground
-                    border = JBUI.Borders.compound(
-                        BorderFactory.createLineBorder(theme.containerBorder, 1, true),
-                        JBUI.Borders.empty(8, 8, 8, 6)
-                    )
-                    add(
-                        JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-                            isOpaque = false
-                            border = JBUI.Borders.emptyBottom(6)
-                            add(runtimeSelector)
-                        },
-                        BorderLayout.NORTH
-                    )
-                    add(JBScrollPane(inputArea).apply {
-                        border = JBUI.Borders.empty()
-                        background = theme.inputBackground
-                        viewport.background = theme.inputBackground
-                    }, BorderLayout.CENTER)
-                    add(
-                        JPanel(BorderLayout()).apply {
-                            isOpaque = false
-                            border = JBUI.Borders.emptyTop(6)
-                            add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
-                                isOpaque = false
-                                add(sendButton)
-                            }, BorderLayout.EAST)
-                        },
-                        BorderLayout.SOUTH
-                    )
-                },
-                BorderLayout.CENTER
-            )
-            add(statusLabel.apply {
-                foreground = theme.secondaryText
-                border = JBUI.Borders.empty(6, 6, 0, 6)
-            }, BorderLayout.SOUTH)
-        }
-    }
-
-    private fun headerButton(text: String, action: () -> Unit): JButton = JButton(text).apply {
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        foreground = theme.primaryText
-        background = theme.controlBackground
-        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
-        isContentAreaFilled = true
-        isFocusPainted = false
-        putClientProperty("JButton.buttonType", "roundRect")
-        addActionListener { action() }
+        statusLabel.foreground = theme.secondaryText
+        statusLabel.border = JBUI.Borders.empty(6, 6, 0, 6)
+        return ChatComposerPanel(runtimeSelector, inputArea, sendButton, statusLabel)
     }
 
     private fun onSendOrStop() {
@@ -546,11 +439,11 @@ class AiToolWindowPanel(
 
     private fun submitMessage(message: String) {
         if (isGenerating()) {
-            appendSystemLine("Дождитесь завершения текущего ответа.")
+            appendSystemLine("\u0414\u043e\u0436\u0434\u0438\u0442\u0435\u0441\u044c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u043e\u0442\u0432\u0435\u0442\u0430.")
             return
         }
         latestActivity = "busy"
-        upsertProgressLine("Идёт обработка запроса...")
+        upsertProgressLine("\u0418\u0434\u0451\u0442 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430 \u0437\u0430\u043f\u0440\u043e\u0441\u0430...")
         updateSendButtonState()
         updateStatusLabel()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -583,7 +476,7 @@ class AiToolWindowPanel(
                     removeProgressLine()
                     updateSendButtonState()
                     updateStatusLabel()
-                    appendSystemLine("Не удалось отправить сообщение: ${ex.message}")
+                    appendSystemLine("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435: ${ex.message}")
                 }
             }
         }
@@ -598,7 +491,7 @@ class AiToolWindowPanel(
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to execute command", ex)
-                SwingUtilities.invokeLater { appendSystemLine("Не удалось выполнить команду: ${ex.message}") }
+                SwingUtilities.invokeLater { appendSystemLine("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0432\u044b\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u043a\u043e\u043c\u0430\u043d\u0434\u0443: ${ex.message}") }
             }
         }
     }
@@ -612,7 +505,7 @@ class AiToolWindowPanel(
             val active = ensureSessionBlocking(forceNew) ?: return@executeOnPooledThread
             SwingUtilities.invokeLater {
                 showChatScreen()
-                setConnectionState(ConnectionState.CONNECTING, "Сессия ${active.take(8)}")
+                setConnectionState(ConnectionState.CONNECTING, "\u0421\u0435\u0441\u0441\u0438\u044f ${active.take(8)}")
             }
             startEventStreamAsync(active)
             refreshControlPlaneAsync()
@@ -642,7 +535,7 @@ class AiToolWindowPanel(
 
             val projectRoot = currentProjectRoot()
             if (projectRoot.isBlank()) {
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Корень проекта не указан") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "\u041a\u043e\u0440\u0435\u043d\u044c \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d") }
                 return null
             }
 
@@ -683,7 +576,7 @@ class AiToolWindowPanel(
                     initialSessionReady = false
                 }
                 logger.warn("Failed to create session", ex)
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Ошибка инициализации: ${ex.message}") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "\u041e\u0448\u0438\u0431\u043a\u0430 \u0438\u043d\u0438\u0446\u0438\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u0438: ${ex.message}") }
                 null
             }
         }
@@ -716,7 +609,7 @@ class AiToolWindowPanel(
     private fun loadSessionsHistoryAsync() {
         val projectRoot = currentProjectRoot()
         if (projectRoot.isBlank()) {
-            setConnectionState(ConnectionState.OFFLINE, "Корень проекта не указан")
+            setConnectionState(ConnectionState.OFFLINE, "\u041a\u043e\u0440\u0435\u043d\u044c \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d")
             return
         }
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -728,7 +621,7 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 logger.warn("Failed to load sessions", ex)
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Не удалось загрузить историю") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0440\u0438\u044e") }
             }
         }
     }
@@ -824,12 +717,12 @@ class AiToolWindowPanel(
         updateSendButtonState()
 
         val progress = when (latestActivity) {
-            "busy" -> "В работе: ${status.currentAction}"
+            "busy" -> "\u0412 \u0440\u0430\u0431\u043e\u0442\u0435: ${status.currentAction}"
             "retry" -> {
-                val retry = status.lastRetryAttempt?.let { "Повтор #$it" } ?: "Повтор"
+                val retry = status.lastRetryAttempt?.let { "\u041f\u043e\u0432\u0442\u043e\u0440 #$it" } ?: "\u041f\u043e\u0432\u0442\u043e\u0440"
                 "$retry: ${status.lastRetryMessage ?: status.currentAction}"
             }
-            "waiting_permission" -> "Ожидает подтверждения: ${status.currentAction}"
+            "waiting_permission" -> "\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f: ${status.currentAction}"
             else -> null
         }
         if (progress != null) {
@@ -874,14 +767,14 @@ class AiToolWindowPanel(
                 background = theme.containerBackground
                 isOpaque = true
             }
-            row.add(JBLabel("Подтверждение: ${permission.title} (${permission.kind})").apply {
+            row.add(JBLabel("\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435: ${permission.title} (${permission.kind})").apply {
                 foreground = theme.primaryText
             }, BorderLayout.CENTER)
             row.add(JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                 isOpaque = false
-                add(actionButton("Разрешить один раз") { submitApproval(permission, "approve_once") })
-                add(actionButton("Разрешить всегда") { submitApproval(permission, "approve_always") })
-                add(actionButton("Отклонить") { submitApproval(permission, "reject") })
+                add(actionButton("\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u043e\u0434\u0438\u043d \u0440\u0430\u0437") { submitApproval(permission, "approve_once") })
+                add(actionButton("\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0432\u0441\u0435\u0433\u0434\u0430") { submitApproval(permission, "approve_always") })
+                add(actionButton("\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c") { submitApproval(permission, "reject") })
             }, BorderLayout.EAST)
             approvalPanel.add(row)
         }
@@ -900,7 +793,7 @@ class AiToolWindowPanel(
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to submit decision", ex)
-                SwingUtilities.invokeLater { appendSystemLine("Не удалось отправить решение: ${ex.message}") }
+                SwingUtilities.invokeLater { appendSystemLine("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0440\u0435\u0448\u0435\u043d\u0438\u0435: ${ex.message}") }
             }
         }
     }
@@ -926,8 +819,8 @@ class AiToolWindowPanel(
                     streamReconnectAttempt = 0
                     setConnectionState(ConnectionState.CONNECTED)
                     val source = response.body?.source() ?: run {
-                        setConnectionState(ConnectionState.RECONNECTING, "Пустое тело ответа")
-                        scheduleStreamReconnect(activeSession, "пустой ответ")
+                        setConnectionState(ConnectionState.RECONNECTING, "\u041f\u0443\u0441\u0442\u043e\u0435 \u0442\u0435\u043b\u043e \u043e\u0442\u0432\u0435\u0442\u0430")
+                        scheduleStreamReconnect(activeSession, "\u043f\u0443\u0441\u0442\u043e\u0439 \u043e\u0442\u0432\u0435\u0442")
                         return@use
                     }
                     var hasData = false
@@ -947,8 +840,8 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 if (logger.isDebugEnabled) logger.debug("Stream disconnected", ex)
-                setConnectionState(ConnectionState.RECONNECTING, ex.message ?: "Поток отключен")
-                scheduleStreamReconnect(activeSession, ex.message ?: "отключено")
+                setConnectionState(ConnectionState.RECONNECTING, ex.message ?: "\u041f\u043e\u0442\u043e\u043a \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d")
+                scheduleStreamReconnect(activeSession, ex.message ?: "РѕС‚РєР»СЋС‡РµРЅРѕ")
             } finally {
                 if (streamCall == call) streamCall = null
             }
@@ -960,7 +853,7 @@ class AiToolWindowPanel(
         val exponent = minOf(streamReconnectAttempt, 5)
         val delayMs = minOf(30_000L, 1200L * (1L shl exponent))
         streamReconnectAttempt = minOf(streamReconnectAttempt + 1, 10)
-        setConnectionState(ConnectionState.RECONNECTING, "Переподключение через ${delayMs}ms ($reason)")
+        setConnectionState(ConnectionState.RECONNECTING, "\u041f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u0447\u0435\u0440\u0435\u0437 ${delayMs}ms ($reason)")
         AppExecutorUtil.getAppScheduledExecutorService().schedule(
             {
                 if (isDisplayable && sessionId == activeSession) {
@@ -1002,7 +895,7 @@ class AiToolWindowPanel(
             sendButton.background = theme.sendButtonBackground
             sendButton.foreground = JBColor.WHITE
         }
-        sendButton.toolTipText = if (isGenerating()) "Остановить генерацию" else "Отправить сообщение"
+        sendButton.toolTipText = if (isGenerating()) "\u041e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044e" else "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435"
         sendButton.isOpaque = true
     }
 
@@ -1019,17 +912,17 @@ class AiToolWindowPanel(
     private fun updateStatusLabel() {
         val runtimeText = selectedRuntime.title
         val activityText = when (latestActivity) {
-            "busy" -> "В работе"
-            "retry" -> "Повтор"
-            "waiting_permission" -> "Ожидание подтверждения"
-            "error" -> "Ошибка"
-            else -> "Готов"
+            "busy" -> "Р’ СЂР°Р±РѕС‚Рµ"
+            "retry" -> "\u041f\u043e\u0432\u0442\u043e\u0440"
+            "waiting_permission" -> "РћР¶РёРґР°РЅРёРµ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ"
+            "error" -> "\u041e\u0448\u0438\u0431\u043a\u0430"
+            else -> "Р“РѕС‚РѕРІ"
         }
         val connectionText = when (connectionState) {
-            ConnectionState.CONNECTING -> "подключение"
-            ConnectionState.CONNECTED -> "подключено"
-            ConnectionState.RECONNECTING -> "переподключение"
-            ConnectionState.OFFLINE -> "не в сети"
+            ConnectionState.CONNECTING -> "РїРѕРґРєР»СЋС‡РµРЅРёРµ"
+            ConnectionState.CONNECTED -> "РїРѕРґРєР»СЋС‡РµРЅРѕ"
+            ConnectionState.RECONNECTING -> "РїРµСЂРµРїРѕРґРєР»СЋС‡РµРЅРёРµ"
+            ConnectionState.OFFLINE -> "РЅРµ РІ СЃРµС‚Рё"
         }
         val details = connectionDetails?.takeIf { it.isNotBlank() }
         val text = if (details != null) {
@@ -1037,10 +930,15 @@ class AiToolWindowPanel(
         } else {
             "$runtimeText | $activityText | $connectionText"
         }
+        val online = connectionState == ConnectionState.CONNECTED
         if (SwingUtilities.isEventDispatchThread()) {
             statusLabel.text = text
+            statusBadge.update(connectionText.replaceFirstChar(Char::uppercase), online)
         } else {
-            SwingUtilities.invokeLater { statusLabel.text = text }
+            SwingUtilities.invokeLater {
+                statusLabel.text = text
+                statusBadge.update(connectionText.replaceFirstChar(Char::uppercase), online)
+            }
         }
     }
 
@@ -1316,7 +1214,7 @@ class AiToolWindowPanel(
         runEventsModel.clear()
         runEventsList.clearSelection()
         runEventPreviewLabel.text = "Live Activity"
-        runEventPreviewArea.text = "Live run activity will appear here for Agent runs."
+        runEventPreviewArea.text = UiStrings.runEventsPlaceholder
         runEventsPanel.isVisible = false
     }
 
@@ -1398,7 +1296,7 @@ class AiToolWindowPanel(
         runArtifactsModel.clear()
         runArtifactsList.clearSelection()
         artifactPreviewLabel.text = "Artifacts"
-        artifactPreviewArea.text = "Artifacts and logs will appear here for Agent runs."
+        artifactPreviewArea.text = UiStrings.runArtifactsPlaceholder
         runArtifactsPanel.isVisible = false
     }
 
@@ -1643,7 +1541,7 @@ class AiToolWindowPanel(
         }
 
         hideSlashPopup()
-        val step = object : BaseListPopupStep<String>("Шаблоны", matches) {
+        val step = object : BaseListPopupStep<String>("РЁР°Р±Р»РѕРЅС‹", matches) {
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 if (selectedValue != null) {
                     val selectedKey = selectedValue.removePrefix("/").substringBefore(" ").trim()
@@ -1746,7 +1644,7 @@ class AiToolWindowPanel(
         timelineContainer.removeAll()
         if (timelineLines.isEmpty()) {
             timelineContainer.add(
-                JBLabel("Задайте вопрос по проекту").apply {
+                JBLabel("\u0417\u0430\u0434\u0430\u0439\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441 \u043f\u043e \u043f\u0440\u043e\u0435\u043a\u0442\u0443").apply {
                     foreground = theme.secondaryText
                     border = JBUI.Borders.empty(12, 10, 8, 10)
                 }
@@ -1863,7 +1761,7 @@ class AiToolWindowPanel(
             val text = if (item == null) {
                 ""
             } else {
-                val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "Сессия ${item.sessionId.take(8)}"
+                val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "\u0421\u0435\u0441\u0441\u0438\u044f ${item.sessionId.take(8)}"
                 "[${runtimeModeFromBackend(item.runtime).title}] $preview  |  ${formatter.format(item.updatedAt)}  |  ${item.activity}"
             }
             return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
@@ -1936,6 +1834,8 @@ class AiToolWindowPanel(
         }
     }
 }
+
+
 
 
 

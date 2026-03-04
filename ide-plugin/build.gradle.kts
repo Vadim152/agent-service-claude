@@ -14,6 +14,18 @@ kotlin {
 group = "ru.sber"
 version = "0.2.0-SNAPSHOT"
 
+val sberIdePath = providers.gradleProperty("sberIdePath").orNull?.trim()?.takeIf { it.isNotEmpty() }
+val sberIdeHomePath = sberIdePath?.let { rawPath ->
+    val supplied = file(rawPath)
+    val ideHome = if (supplied.isFile && supplied.extension.equals("exe", ignoreCase = true)) {
+        // Accept both IDE home and direct .../bin/idea64.exe path.
+        supplied.parentFile?.parentFile ?: supplied.parentFile
+    } else {
+        supplied
+    }
+    ideHome?.absolutePath
+}
+
 repositories {
     mavenCentral()
     intellijPlatform {
@@ -31,8 +43,12 @@ dependencies {
     testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4")
 
     intellijPlatform {
-        intellijIdea("2025.1") {
-            useInstaller.set(false)
+        if (sberIdeHomePath != null) {
+            local(sberIdeHomePath)
+        } else {
+            intellijIdea("2025.1") {
+                useInstaller.set(false)
+            }
         }
         bundledPlugin("com.intellij.java")
         jetbrainsRuntime()

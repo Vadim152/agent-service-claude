@@ -84,6 +84,7 @@ val checkEncodingHealth by tasks.registering {
     description = "Fails if source/resource files contain mojibake markers."
     doLast {
         val hits = mutableListOf<String>()
+        val allowedRussianChars = (('А'..'я').toSet() + setOf('Ё', 'ё'))
         fileTree("src/main") {
             include("**/*.kt", "**/*.xml", "**/*.properties")
         }
@@ -91,7 +92,11 @@ val checkEncodingHealth by tasks.registering {
             .sortedBy { it.path }
             .forEach { file ->
                 file.readLines(Charsets.UTF_8).forEachIndexed { index, line ->
-                    if (mojibakeMarkers.any(line::contains)) {
+                    val hasKnownMojibakeMarker = mojibakeMarkers.any(line::contains)
+                    val hasSuspiciousCyrillic = line.any { ch ->
+                        ch in '\u0400'..'\u04FF' && ch !in allowedRussianChars
+                    }
+                    if (hasKnownMojibakeMarker || hasSuspiciousCyrillic) {
                         val relative = file.relativeTo(projectDir).invariantSeparatorsPath
                         hits += "$relative:${index + 1}: ${line.trim()}"
                     }

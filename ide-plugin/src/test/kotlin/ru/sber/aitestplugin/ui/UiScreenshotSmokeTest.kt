@@ -18,7 +18,6 @@ import ru.sber.aitestplugin.ui.dialogs.buildApplyFeatureFormPanel
 import ru.sber.aitestplugin.ui.dialogs.buildGenerateFeatureFormPanel
 import ru.sber.aitestplugin.ui.theme.PluginUiTheme
 import ru.sber.aitestplugin.ui.toolwindow.components.ChatComposerPanel
-import ru.sber.aitestplugin.ui.toolwindow.components.RunDetailsPanel
 import ru.sber.aitestplugin.ui.toolwindow.components.ToolWindowHeaderPanel
 import java.awt.BorderLayout
 import java.awt.Color
@@ -37,7 +36,6 @@ import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JScrollPane
 import javax.swing.SwingUtilities
 
 class UiScreenshotSmokeTest {
@@ -72,43 +70,16 @@ class UiScreenshotSmokeTest {
             }
         )
 
-        val runInfo = JBTextArea("Run #42\nСтатус: waiting\nRuntime: chat").apply {
-            isEditable = false
-            lineWrap = true
-            wrapStyleWord = true
-            background = PluginUiTheme.inputBackground
-            foreground = PluginUiTheme.primaryText
-        }
-        val events = JBTextArea("[12:40] session created\n[12:41] waiting for input").apply {
-            isEditable = false
-            lineWrap = true
-            wrapStyleWord = true
-            background = PluginUiTheme.inputBackground
-            foreground = PluginUiTheme.primaryText
-        }
-        val artifacts = JBTextArea("generated.feature\nlogs/run-42.txt").apply {
-            isEditable = false
-            lineWrap = true
-            wrapStyleWord = true
-            background = PluginUiTheme.inputBackground
-            foreground = PluginUiTheme.primaryText
-        }
         val approvals = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
             isOpaque = false
             add(JButton("Подтвердить"))
             add(JButton("Отклонить"))
         }
-        val details = RunDetailsPanel(
-            infoPanel = JScrollPane(runInfo),
-            eventsPanel = JScrollPane(events),
-            artifactsPanel = JScrollPane(artifacts),
-            approvalsPanel = approvals
-        )
 
         root.add(JPanel(BorderLayout(0, 12)).apply {
             isOpaque = false
             add(timelineCard, BorderLayout.CENTER)
-            add(details, BorderLayout.SOUTH)
+            add(approvals, BorderLayout.SOUTH)
         }, BorderLayout.CENTER)
 
         root.add(

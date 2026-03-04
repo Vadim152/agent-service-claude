@@ -43,15 +43,10 @@ foreach ($logFile in @($stdoutLog, $stderrLog)) {
     }
 }
 
-$startupCommand = @(
-    "Set-Location '$repoRoot'"
-    "`$env:PYTHONPATH='src'"
-    "& '$python' -m app.main"
-) -join "; "
-
+$env:PYTHONPATH = "src"
 $process = Start-Process `
-    -FilePath "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" `
-    -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $startupCommand `
+    -FilePath $python `
+    -ArgumentList "-m", "app.main" `
     -WorkingDirectory $repoRoot `
     -PassThru `
     -WindowStyle Hidden `

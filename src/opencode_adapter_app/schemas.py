@@ -89,3 +89,20 @@ class AdapterApprovalDecisionResponse(ApiBaseModel):
     decision: str
     status: str
     updated_at: datetime = Field(..., alias="updatedAt")
+
+
+class AdapterDebugRuntimeResponse(ApiBaseModel):
+    service: str = "opencode-adapter"
+    runner_type: str = Field(..., alias="runnerType")
+    resolution_mode: str = Field(..., alias="modelResolution")
+    forced_model: str | None = Field(default=None, alias="forcedModel")
+    base_url: str = Field(..., alias="baseUrl")
+    server_running: bool = Field(..., alias="serverRunning")
+    server_ready: bool = Field(..., alias="serverReady")
+    active_project_root: str | None = Field(default=None, alias="activeProjectRoot")
+    active_config_file: str | None = Field(default=None, alias="activeConfigFile")
+    active_config_dir: str | None = Field(default=None, alias="activeConfigDir")
+    resolved_providers: list[str] = Field(default_factory=list, alias="resolvedProviders")
+    resolved_model: str | None = Field(default=None, alias="resolvedModel")
+    raw_config: dict[str, Any] | None = Field(default=None, alias="rawConfig")
+    config_error: str | None = Field(default=None, alias="configError")

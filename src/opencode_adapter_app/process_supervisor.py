@@ -114,7 +114,7 @@ class OpenCodeProcessSupervisor:
         self._run_stops[backend_run_id] = stop_event
         events_handle = events_path.open("a", encoding="utf-8")
         try:
-            self._headless_server.ensure_started()
+            self._headless_server.ensure_started(project_root=str(run["project_root"]))
             session_id = self._ensure_backend_session(run)
             now = utcnow().isoformat()
             self._state_store.patch_run(
@@ -199,7 +199,12 @@ class OpenCodeProcessSupervisor:
             "agent": self._resolve_agent(run),
             "parts": [{"type": "text", "text": str(run.get("prompt") or "")}],
         }
-        model = self._parse_model(self._settings.default_model)
+        model_override = self._settings.resolve_forced_model()
+        if model_override:
+            LOGGER.info("Forcing OpenCode model for %s: %s", run["backend_run_id"], model_override)
+        else:
+            LOGGER.info("Using OpenCode config-managed model for %s", run["backend_run_id"])
+        model = self._parse_model(model_override)
         if model is not None:
             payload["model"] = model
         return payload
@@ -716,8 +721,9 @@ class OpenCodeProcessSupervisor:
         )
         if backend_session_id:
             command.extend(["--session", backend_session_id])
-        if self._settings.default_model:
-            command.extend(["--model", self._settings.default_model])
+        model_override = self._settings.resolve_forced_model()
+        if model_override:
+            command.extend(["--model", model_override])
         return command
 
     def _resolve_agent(self, run: dict[str, Any]) -> str:

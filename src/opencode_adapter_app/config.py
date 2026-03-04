@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,8 @@ class AdapterSettings(BaseSettings):
         env_file=ENV_PATH,
         case_sensitive=False,
         extra="ignore",
+        protected_namespaces=(),
+        populate_by_name=True,
     )
 
     host: str = Field(default="127.0.0.1")
@@ -32,6 +35,8 @@ class AdapterSettings(BaseSettings):
     binary_args_json: str | None = Field(default=None)
     runner_type: str = Field(default="opencode")
     default_agent: str = Field(default="agent")
+    model_mode: str = Field(default="config")
+    model_override: str | None = Field(default=None)
     default_model: str | None = Field(default=None)
     server_host: str = Field(default="127.0.0.1")
     server_port: int = Field(default=4096)
@@ -41,10 +46,35 @@ class AdapterSettings(BaseSettings):
     graceful_kill_timeout_ms: int = Field(default=3_000)
     run_start_timeout_ms: int = Field(default=10_000)
     max_events_per_run: int = Field(default=5_000)
+    config_file: str | None = Field(default=None)
     config_dir: str | None = Field(default=None)
     agent_map_json: str | None = Field(default=None)
     env_allowlist_json: str | None = Field(default=None)
     inherit_parent_env: bool = Field(default=True)
+    gigachat_client_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GIGACHAT_CLIENT_ID", "AGENT_SERVICE_GIGACHAT_CLIENT_ID"),
+    )
+    gigachat_client_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GIGACHAT_CLIENT_SECRET", "AGENT_SERVICE_GIGACHAT_CLIENT_SECRET"),
+    )
+    gigachat_scope: str = Field(
+        default="GIGACHAT_API_PERS",
+        validation_alias=AliasChoices("GIGACHAT_SCOPE", "AGENT_SERVICE_GIGACHAT_SCOPE"),
+    )
+    gigachat_auth_url: str = Field(
+        default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+        validation_alias=AliasChoices("GIGACHAT_AUTH_URL", "AGENT_SERVICE_GIGACHAT_AUTH_URL"),
+    )
+    gigachat_api_url: str = Field(
+        default="https://gigachat.devices.sberbank.ru/api/v1",
+        validation_alias=AliasChoices("GIGACHAT_API_URL", "AGENT_SERVICE_GIGACHAT_API_URL"),
+    )
+    gigachat_verify_ssl: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("GIGACHAT_VERIFY_SSL", "AGENT_SERVICE_GIGACHAT_VERIFY_SSL"),
+    )
 
     @model_validator(mode="after")
     def _validate(self) -> "AdapterSettings":
@@ -54,6 +84,15 @@ class AdapterSettings(BaseSettings):
         self.runner_type = self.runner_type.strip().lower()
         if self.runner_type not in {"opencode", "raw_json_runner"}:
             raise ValueError("runner_type must be one of: opencode, raw_json_runner")
+        self.model_mode = self.model_mode.strip().lower()
+        if self.model_mode not in {"config", "override"}:
+            raise ValueError("model_mode must be one of: config, override")
+        if self.model_override is not None:
+            self.model_override = self.model_override.strip() or None
+        if self.default_model is not None:
+            self.default_model = self.default_model.strip() or None
+        if self.model_mode == "override" and not (self.model_override or self.default_model):
+            raise ValueError("model_override must be set when model_mode=override")
         if self.server_port < 1:
             raise ValueError("server_port must be >= 1")
         if self.inline_artifact_max_bytes < 1:
@@ -117,6 +156,10 @@ class AdapterSettings(BaseSettings):
             "CURL_CA_BUNDLE",
             "NODE_EXTRA_CA_CERTS",
             "NODE_OPTIONS",
+            "GIGACHAT_ACCESS_TOKEN",
+            "GIGACHAT_API_URL",
+            "GIGACHAT_AUTH_URL",
+            "GIGACHAT_SCOPE",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
             "AWS_ACCESS_KEY_ID",
@@ -127,9 +170,33 @@ class AdapterSettings(BaseSettings):
             "LITELLM_API_KEY",
             "PORTKEY_API_KEY",
             "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG",
         ]
 
-    def build_child_env(self) -> dict[str, str]:
+    @property
+    def xdg_root(self) -> Path:
+        root = self.work_root / "xdg"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def xdg_env(self) -> dict[str, str]:
+        mapping = {
+            "XDG_DATA_HOME": self.xdg_root / "data",
+            "XDG_STATE_HOME": self.xdg_root / "state",
+            "XDG_CACHE_HOME": self.xdg_root / "cache",
+            "XDG_CONFIG_HOME": self.xdg_root / "config",
+        }
+        for path in mapping.values():
+            path.mkdir(parents=True, exist_ok=True)
+        return {key: str(value) for key, value in mapping.items()}
+
+    def build_child_env(
+        self,
+        *,
+        project_root: str | Path | None = None,
+        config_file: str | None = None,
+        config_dir: str | None = None,
+    ) -> dict[str, str]:
         if self.inherit_parent_env:
             env: dict[str, str] = dict(os.environ)
         else:
@@ -138,9 +205,59 @@ class AdapterSettings(BaseSettings):
                 value = os.environ.get(key)
                 if value is not None:
                     env[key] = value
-        if self.config_dir:
-            env["OPENCODE_CONFIG_DIR"] = self.config_dir
+        env.update(self.xdg_env())
+        resolved_config_file = config_file or self.resolve_opencode_config_file(project_root)
+        resolved_config_dir = config_dir or self.resolve_opencode_config_dir(project_root)
+        if resolved_config_file:
+            env["OPENCODE_CONFIG"] = resolved_config_file
+        elif "OPENCODE_CONFIG" in env:
+            env.pop("OPENCODE_CONFIG", None)
+        if resolved_config_dir:
+            env["OPENCODE_CONFIG_DIR"] = resolved_config_dir
+        elif "OPENCODE_CONFIG_DIR" in env:
+            env.pop("OPENCODE_CONFIG_DIR", None)
         return env
+
+    def resolve_opencode_config_file(self, project_root: str | Path | None = None) -> str | None:
+        if self.config_file:
+            return self.config_file
+        if project_root is None:
+            return None
+        root = Path(project_root)
+        candidates = [
+            root / "opencode.json",
+            root / ".opencode" / "opencode.json",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        return None
+
+    def resolve_opencode_config_dir(self, project_root: str | Path | None = None) -> str | None:
+        if self.config_dir:
+            return self.config_dir
+        if project_root is None:
+            return None
+        candidate = Path(project_root) / ".opencode"
+        if candidate.is_dir():
+            return str(candidate)
+        return None
+
+    def resolve_forced_model(self) -> str | None:
+        if self.model_override:
+            return self.model_override
+        if self.default_model:
+            return self.default_model
+        return None
+
+    def model_resolution_description(self) -> str:
+        forced = self.resolve_forced_model()
+        if forced:
+            source = "OPENCODE_ADAPTER_MODEL_OVERRIDE"
+            if not self.model_override and self.default_model:
+                source = "OPENCODE_ADAPTER_DEFAULT_MODEL"
+            return f"override ({forced}) via {source}"
+        return "config"
 
 
 def _parse_json_list(raw: str | None) -> list[str]:
@@ -163,4 +280,12 @@ def _parse_json_object(raw: str | None) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def get_settings() -> AdapterSettings:
-    return AdapterSettings()
+    settings = AdapterSettings()
+    if settings.default_model and not settings.model_override:
+        warnings.warn(
+            "OPENCODE_ADAPTER_DEFAULT_MODEL is deprecated; use "
+            "OPENCODE_ADAPTER_MODEL_MODE=override with OPENCODE_ADAPTER_MODEL_OVERRIDE instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return settings

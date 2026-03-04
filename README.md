@@ -154,6 +154,18 @@ For local `Agent` runtime development you only need two services:
 - `agent-service`
 - `opencode-adapter`
 
+If you installed the repo in editable mode, the adapter can also be started directly with:
+
+```powershell
+opencode-adapter
+```
+
+If that command is not available yet, refresh the editable install once:
+
+```powershell
+python -m pip install -e .
+```
+
 Start both:
 
 ```powershell
@@ -176,6 +188,36 @@ The adapter is configured through `.env` and by default talks to local `opencode
 
 - `AGENT_SERVICE_OPENCODE_BACKEND_MODE=http`
 - `AGENT_SERVICE_OPENCODE_ADAPTER_URL=http://127.0.0.1:8011`
+
+For delegated `Agent` runs, model selection is config-first:
+
+- by default the adapter does not force a model
+- OpenCode resolves the model from its own config, agent profile, or proxy/gateway setup
+- `agent-service` LLM settings such as `AGENT_SERVICE_LLM_MODEL` do not automatically apply to `Agent/opencode`
+- if needed for debugging, you can force a model with:
+  - `OPENCODE_ADAPTER_MODEL_MODE=override`
+  - `OPENCODE_ADAPTER_MODEL_OVERRIDE=<provider>/<model>`
+
+This repo also ships a project-level [opencode.json](/C:/Users/BaguM/IdeaProjects/agent-service/opencode.json) configured for direct GigaChat usage through OpenCode's OpenAI-compatible provider path. When `GIGACHAT_CLIENT_ID` and `GIGACHAT_CLIENT_SECRET` are present, the adapter bootstraps a short-lived `GIGACHAT_ACCESS_TOKEN` before starting `opencode serve`.
+
+Config discovery for delegated `Agent` runs is project-aware:
+
+- if `projectRoot/opencode.json` exists, the adapter exports it as `OPENCODE_CONFIG`
+- if `projectRoot/.opencode/` exists, the adapter exports it as `OPENCODE_CONFIG_DIR`
+- if you want to force a global config regardless of project root, set:
+  - `OPENCODE_ADAPTER_CONFIG_FILE=<path-to-opencode.json>`
+  - `OPENCODE_ADAPTER_CONFIG_DIR=<path-to-.opencode>`
+
+`OPENCODE_CONFIG_DIR` alone is not a replacement for `opencode.json`; it is only for the auxiliary `.opencode` directory structure.
+
+For deterministic local runs, the adapter also isolates OpenCode `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` under `.agent/opencode-adapter/xdg`. This avoids collisions with your global OpenCode state and prevents `readonly database` failures from leaking into delegated runs.
+
+Runtime diagnostics are available from the adapter itself:
+
+- `GET /health`
+- `GET /debug/runtime`
+
+`/debug/runtime` reports the active project root, active `opencode.json`, active `.opencode` dir, resolved providers, resolved model, and the raw `/config` payload currently exposed by the underlying `opencode serve` process.
 
 ## Key Environment Variables
 

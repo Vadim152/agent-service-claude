@@ -96,7 +96,11 @@ def _write_fake_runner(path: Path) -> None:
                         "status": "succeeded",
                         "sessionId": session_id,
                         "currentAction": "Completed",
-                        "output": {"summary": f"done: {prompt}", "sessionId": session_id},
+                        "output": {
+                            "summary": f"done: {prompt}",
+                            "sessionId": session_id,
+                            "model": args.model,
+                        },
                     }
                 ),
                 flush=True,
@@ -154,6 +158,7 @@ def test_create_run_reports_success_and_artifacts(tmp_path: Path) -> None:
     payload = client.get(f"/v1/runs/{backend_run_id}").json()
     assert payload["backendSessionId"].startswith("session-")
     assert payload["output"]["summary"] == "done: hello adapter"
+    assert payload["output"]["model"] is None
     names = {item["name"] for item in payload["artifacts"]}
     assert {"notes.log", "summary.txt", "stderr.log"}.issubset(names)
 
@@ -262,3 +267,90 @@ def test_startup_timeout_marks_run_failed(tmp_path: Path) -> None:
     _wait_until(_done, timeout_s=12.0)
     payload = client.get(f"/v1/runs/{backend_run_id}").json()
     assert payload["currentAction"] == "Runner startup timeout"
+
+
+def test_override_mode_passes_model_to_runner(tmp_path: Path) -> None:
+    runner = tmp_path / "fake_runner.py"
+    _write_fake_runner(runner)
+    settings = AdapterSettings(
+        binary=sys.executable,
+        binary_args_json=json.dumps([str(runner)]),
+        runner_type="raw_json_runner",
+        model_mode="override",
+        model_override="gigachat/GigaChat-Max",
+        print_logs=False,
+        work_root=tmp_path / "adapter-work",
+    )
+    client = TestClient(create_app(settings))
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    backend_run_id = client.post(
+        "/v1/runs",
+        json={
+            "runId": "run-override",
+            "projectRoot": str(project_root),
+            "prompt": "hello adapter",
+        },
+    ).json()["backendRunId"]
+
+    _wait_until(lambda: client.get(f"/v1/runs/{backend_run_id}").json()["status"] == "succeeded")
+    payload = client.get(f"/v1/runs/{backend_run_id}").json()
+    assert payload["output"]["model"] == "gigachat/GigaChat-Max"
+
+
+def test_legacy_default_model_is_used_as_override(tmp_path: Path) -> None:
+    runner = tmp_path / "fake_runner.py"
+    _write_fake_runner(runner)
+    settings = AdapterSettings(
+        binary=sys.executable,
+        binary_args_json=json.dumps([str(runner)]),
+        runner_type="raw_json_runner",
+        default_model="legacy/provider-model",
+        print_logs=False,
+        work_root=tmp_path / "adapter-work",
+    )
+    client = TestClient(create_app(settings))
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    backend_run_id = client.post(
+        "/v1/runs",
+        json={
+            "runId": "run-legacy",
+            "projectRoot": str(project_root),
+            "prompt": "hello adapter",
+        },
+    ).json()["backendRunId"]
+
+    _wait_until(lambda: client.get(f"/v1/runs/{backend_run_id}").json()["status"] == "succeeded")
+    payload = client.get(f"/v1/runs/{backend_run_id}").json()
+    assert payload["output"]["model"] == "legacy/provider-model"
+
+
+def test_override_mode_requires_model_override() -> None:
+    try:
+        AdapterSettings(model_mode="override")
+    except ValueError as exc:
+        assert "model_override must be set" in str(exc)
+    else:
+        raise AssertionError("Expected AdapterSettings to reject override mode without model_override")
+
+
+def test_debug_runtime_reports_adapter_snapshot(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+
+    response = client.get("/debug/runtime")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["service"] == "opencode-adapter"
+    assert payload["runnerType"] == "raw_json_runner"
+    assert payload["modelResolution"] == "config"
+    assert payload["forcedModel"] is None
+    assert payload["serverRunning"] is False
+    assert payload["serverReady"] is False
+    assert payload["activeConfigFile"] is None
+    assert payload["resolvedProviders"] == []
+    assert payload["resolvedModel"] is None
+    assert payload["rawConfig"] is None

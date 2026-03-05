@@ -143,6 +143,8 @@ class AiToolWindowPanel(
     private var suppressSlashPopupUntilReset: Boolean = false
     private var lastSlashMatches: List<String> = emptyList()
     private var latestActivity: String = "idle"
+    private var latestContextPercent: Int? = null
+    private var latestTokenTotal: Int? = null
     private var connectionState: ConnectionState = ConnectionState.CONNECTING
     private var connectionDetails: String? = null
     private var streamReconnectAttempt: Int = 0
@@ -166,7 +168,7 @@ class AiToolWindowPanel(
         add(buildRoot(), BorderLayout.CENTER)
         updateStatusLabel()
         initialSessionRequested = true
-        ensureSessionAsync(forceNew = true)
+        ensureSessionAsync(forceNew = false)
     }
 
     override fun addNotify() {
@@ -427,7 +429,9 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun currentProjectRoot(): String = project.basePath.orEmpty()
+    private fun currentRuntimeProjectRoot(mode: RuntimeMode): String {
+        return resolveRuntimeProjectRootValue(mode.backendValue, project.basePath)
+    }
 
     private fun ensureSessionBlocking(forceNew: Boolean): String? {
         synchronized(sessionStateLock) {
@@ -448,7 +452,7 @@ class AiToolWindowPanel(
                 initialSessionReady = false
             }
 
-            val projectRoot = currentProjectRoot()
+            val projectRoot = currentRuntimeProjectRoot(selectedRuntime)
             if (projectRoot.isBlank()) {
                 SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "\u041a\u043e\u0440\u0435\u043d\u044c \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d") }
                 return null
@@ -520,7 +524,7 @@ class AiToolWindowPanel(
     }
 
     private fun loadSessionsHistoryAsync() {
-        val projectRoot = currentProjectRoot()
+        val projectRoot = currentRuntimeProjectRoot(selectedRuntime)
         if (projectRoot.isBlank()) {
             setConnectionState(ConnectionState.OFFLINE, "\u041a\u043e\u0440\u0435\u043d\u044c \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d")
             return
@@ -680,18 +684,29 @@ class AiToolWindowPanel(
     private fun renderStatus(status: ChatSessionStatusResponseDto) {
         latestActivity = status.activity.lowercase()
         selectedRuntime = runtimeModeFromBackend(status.runtime)
+        if (selectedRuntime == RuntimeMode.AGENT) {
+            latestContextPercent = resolveContextPercent(
+                percent = status.limits.percent,
+                used = status.limits.used,
+                contextWindow = status.limits.contextWindow
+            )
+            latestTokenTotal = opencodeCliTokenTotal(
+                input = status.totals.tokens.input,
+                output = status.totals.tokens.output,
+                reasoning = status.totals.tokens.reasoning
+            )
+        } else {
+            latestContextPercent = null
+            latestTokenTotal = null
+        }
         runtimeSelector.selectedItem = selectedRuntime
         updateSendButtonState()
 
-        val progress = when (latestActivity) {
-            "busy" -> "\u0412 \u0440\u0430\u0431\u043e\u0442\u0435: ${status.currentAction}"
-            "retry" -> {
-                val retry = status.lastRetryAttempt?.let { "\u041f\u043e\u0432\u0442\u043e\u0440 #$it" } ?: "\u041f\u043e\u0432\u0442\u043e\u0440"
-                "$retry: ${status.lastRetryMessage ?: status.currentAction}"
-            }
-            "waiting_permission" -> "\u041e\u0436\u0438\u0434\u0430\u0435\u0442 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f: ${status.currentAction}"
-            else -> null
-        }
+        val progress = AgentEventLogFormatter.formatPhaseProgress(
+            activity = latestActivity,
+            currentAction = status.currentAction,
+            retryMessage = status.lastRetryMessage
+        )
         if (progress != null) {
             upsertProgressLine(progress)
         } else {
@@ -868,12 +883,14 @@ class AiToolWindowPanel(
             ConnectionState.RECONNECTING -> UiStrings.statusReconnecting
             ConnectionState.OFFLINE -> UiStrings.statusOffline
         }
-        val details = connectionDetails?.takeIf { it.isNotBlank() }
-        val text = if (details != null) {
-            "$runtimeText | $activityText | $connectionText | $details"
-        } else {
-            "$runtimeText | $activityText | $connectionText"
-        }
+        val text = buildStatusLabelText(
+            runtimeText = runtimeText,
+            activityText = activityText,
+            connectionText = connectionText,
+            details = connectionDetails,
+            contextPercent = latestContextPercent.takeIf { selectedRuntime == RuntimeMode.AGENT },
+            tokenTotal = latestTokenTotal.takeIf { selectedRuntime == RuntimeMode.AGENT }
+        )
         val online = connectionState == ConnectionState.CONNECTED
         if (SwingUtilities.isEventDispatchThread()) {
             statusLabel.text = text
@@ -1253,6 +1270,41 @@ class AiToolWindowPanel(
             }
         }
     }
+}
+
+internal fun resolveRuntimeProjectRootValue(runtime: String, projectBasePath: String?): String {
+    return when (runtime.trim().lowercase()) {
+        "opencode" -> projectBasePath.orEmpty()
+        else -> projectBasePath.orEmpty()
+    }
+}
+
+internal fun resolveContextPercent(percent: Double?, used: Int, contextWindow: Int?): Int {
+    val direct = percent?.times(100.0)?.toInt()
+    if (direct != null) {
+        return direct.coerceIn(0, 100)
+    }
+    val window = contextWindow ?: return 0
+    if (window <= 0) return 0
+    return ((used.toDouble() / window.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+}
+
+internal fun opencodeCliTokenTotal(input: Int, output: Int, reasoning: Int): Int =
+    (input + output + reasoning).coerceAtLeast(0)
+
+internal fun buildStatusLabelText(
+    runtimeText: String,
+    activityText: String,
+    connectionText: String,
+    details: String?,
+    contextPercent: Int?,
+    tokenTotal: Int?
+): String {
+    val chunks = mutableListOf(runtimeText, activityText, connectionText)
+    contextPercent?.let { chunks += "Контекст ${it}%" }
+    tokenTotal?.let { chunks += "Токены $it" }
+    details?.takeIf { it.isNotBlank() }?.let { chunks += it }
+    return chunks.joinToString(" | ")
 }
 
 

@@ -45,6 +45,8 @@ class AdapterRunStatusResponse(ApiBaseModel):
     output: dict[str, Any] | None = None
     artifacts: list[AdapterArtifactDto] = Field(default_factory=list)
     pending_approvals: list[AdapterApprovalDto] = Field(default_factory=list, alias="pendingApprovals")
+    totals: dict[str, Any] | None = None
+    limits: dict[str, Any] | None = None
     created_at: datetime = Field(..., alias="createdAt")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     finished_at: datetime | None = Field(default=None, alias="finishedAt")

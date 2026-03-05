@@ -4,6 +4,8 @@ import ru.sber.aitestplugin.model.ChatEventDto
 import java.time.Instant
 
 internal object AgentEventLogFormatter {
+    private val ACTIVE_ACTIVITIES = setOf("busy", "retry", "waiting_permission")
+
     internal enum class TimelineKind {
         USER,
         AGENT_EVENT,
@@ -17,6 +19,13 @@ internal object AgentEventLogFormatter {
         val createdAt: Instant,
         val stableKey: String
     )
+
+    internal enum class ExecutionPhase(val title: String) {
+        THINKING("Thinking"),
+        WORKING("Working"),
+        RUNNING("Running"),
+        APPLYING_CHANGES("Applying changes")
+    }
 
     private enum class EventCategory(val title: String) {
         STATUS("Status"),
@@ -58,6 +67,33 @@ internal object AgentEventLogFormatter {
                 .thenBy { it.stableKey }
         )
 
+    fun formatPhaseProgress(activity: String, currentAction: String, retryMessage: String? = null): String? {
+        val normalizedActivity = activity.lowercase()
+        if (normalizedActivity !in ACTIVE_ACTIVITIES) return null
+        val detail = when (normalizedActivity) {
+            "retry" -> retryMessage?.trim().orEmpty().ifBlank { currentAction.trim() }
+            else -> currentAction.trim()
+        }
+        val fallbackDetail = when (normalizedActivity) {
+            "waiting_permission" -> "Awaiting approval"
+            "retry" -> "Retrying"
+            else -> "Working"
+        }
+        val effectiveDetail = detail.ifBlank { fallbackDetail }
+        val phase = classifyPhase(effectiveDetail)
+        return "${phase.title}: $effectiveDetail"
+    }
+
+    fun classifyPhase(detail: String): ExecutionPhase {
+        val normalized = detail.lowercase()
+        if (normalized.isBlank()) return ExecutionPhase.WORKING
+        if (containsAny(normalized, APPLYING_KEYWORDS)) return ExecutionPhase.APPLYING_CHANGES
+        if (containsAny(normalized, RUNNING_KEYWORDS)) return ExecutionPhase.RUNNING
+        if (containsAny(normalized, THINKING_KEYWORDS)) return ExecutionPhase.THINKING
+        if (containsAny(normalized, WORKING_KEYWORDS)) return ExecutionPhase.WORKING
+        return ExecutionPhase.WORKING
+    }
+
     private fun orderWeight(kind: TimelineKind): Int = when (kind) {
         TimelineKind.USER -> 0
         TimelineKind.AGENT_EVENT -> 1
@@ -70,11 +106,17 @@ internal object AgentEventLogFormatter {
         val detail = resolveDetail(event.payload)
         return when (normalized) {
             "heartbeat" -> null
-            "message.received" -> compact(EventCategory.STATUS, "Request accepted", event)
-            "opencode.run_created" -> compact(EventCategory.STATUS, "Run created", event)
-            "opencode.run.queued" -> compact(EventCategory.STATUS, "Queued", event)
-            "opencode.run.started" -> compact(EventCategory.STATUS, "Run started", event)
-            "opencode.run.retrying" -> compact(EventCategory.STATUS, "Retrying run", event)
+            "message.received",
+            "opencode.run_created",
+            "opencode.run.queued",
+            "opencode.run.started",
+            "opencode.run.finished",
+            "run.started",
+            "run.queued",
+            "run.finished",
+            "run.succeeded" -> null
+            "opencode.run.retrying", "run.retrying" ->
+                compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Retrying", event)
             "opencode.run.awaiting_approval", "permission.requested" ->
                 compact(EventCategory.APPROVAL, "Approval required", event)
             "approval.decision", "permission.approved", "permission.rejected" ->
@@ -83,9 +125,8 @@ internal object AgentEventLogFormatter {
                 compact(EventCategory.CHANGE, artifactMessage(event.payload), event)
             "command.executed", "opencode.command.executed" ->
                 compact(EventCategory.COMMAND, commandMessage(event.payload), event)
-            "opencode.run.progress" ->
+            "opencode.run.progress", "run.progress" ->
                 compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Working", event)
-            "opencode.run.finished", "run.succeeded" -> null
             "opencode.run.failed", "run.failed" ->
                 compact(EventCategory.STATUS, if (detail.isNotBlank()) "Failed: $detail" else "Failed", event)
             "run.cancelled", "opencode.run.cancelled" ->
@@ -135,5 +176,20 @@ internal object AgentEventLogFormatter {
         val createdAt: Instant,
         val stableKey: String,
         val count: Int = 1
+    )
+
+    private fun containsAny(value: String, markers: Set<String>): Boolean = markers.any { value.contains(it) }
+
+    private val THINKING_KEYWORDS = setOf(
+        "thinking", "think", "scan", "scanning", "read", "reading", "analyz", "search", "inspect", "index"
+    )
+    private val RUNNING_KEYWORDS = setOf(
+        "running", "run ", "execute", "executing", "test", "pytest", "gradle", "lint", "command", "tool"
+    )
+    private val APPLYING_KEYWORDS = setOf(
+        "apply", "applying", "patch", "edit", "write", "saving", "save", "diff", "artifact", "change", "updated"
+    )
+    private val WORKING_KEYWORDS = setOf(
+        "work", "retry", "approval", "awaiting", "streaming", "processing"
     )
 }

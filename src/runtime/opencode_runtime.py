@@ -5,6 +5,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import RLock
 from typing import Any
 
@@ -109,6 +110,12 @@ class OpenCodeRunDriver:
         normalized_status = self._normalize_status(status_payload.get("status") or run.get("status") or "queued")
         backend_session_id = status_payload.get("backendSessionId") or status_payload.get("sessionId") or run.get("backend_session_id")
         current_action = str(status_payload.get("currentAction") or status_payload.get("message") or normalized_status.title())
+        session_id = str(run.get("session_id") or "").strip() or None
+        existing_session = self._session_state_store.get_session(session_id) if session_id else None
+        existing_limits = dict((existing_session or {}).get("limits") or {})
+        default_context_window = int(existing_limits.get("contextWindow") or 200_000)
+        totals = _extract_status_totals(status_payload) or (existing_session or {}).get("totals")
+        limits = _extract_status_limits(status_payload, default_context_window=default_context_window) or (existing_session or {}).get("limits")
         attempts = self._merge_attempt_artifacts(run, status_payload)
         self._run_state_store.patch_job(
             run_id,
@@ -124,11 +131,13 @@ class OpenCodeRunDriver:
             result=status_payload.get("output") or status_payload.get("result") or run.get("result"),
         )
         self._update_session_run_state(
-            session_id=str(run.get("session_id") or "").strip() or None,
+            session_id=session_id,
             run_id=run_id,
             status=normalized_status,
             current_action=current_action,
             backend_session_id=backend_session_id,
+            totals=totals,
+            limits=limits,
         )
         pending = status_payload.get("pendingApprovals") or []
         if isinstance(pending, list):
@@ -291,20 +300,29 @@ class OpenCodeRunDriver:
         status: str,
         current_action: str,
         backend_session_id: str | None,
+        totals: dict[str, Any] | None = None,
+        limits: dict[str, Any] | None = None,
     ) -> None:
         if not session_id:
             return
         activity = "waiting_permission" if self._session_state_store.list_pending_tool_calls(session_id=session_id) else ("idle" if status in {"succeeded", "cancelled"} else "busy")
         if status == "failed":
             activity = "error"
+        changes: dict[str, Any] = {
+            "activity": activity,
+            "current_action": current_action,
+            "active_run_id": run_id,
+            "active_run_status": status,
+            "active_run_backend": "opencode-adapter",
+            "backend_session_id": backend_session_id,
+        }
+        if totals is not None:
+            changes["totals"] = totals
+        if limits is not None:
+            changes["limits"] = limits
         self._session_state_store.update_session(
             session_id,
-            activity=activity,
-            current_action=current_action,
-            active_run_id=run_id,
-            active_run_status=status,
-            active_run_backend="opencode-adapter",
-            backend_session_id=backend_session_id,
+            **changes,
         )
 
     @staticmethod
@@ -385,6 +403,84 @@ def _extract_structured_error(payload: dict[str, Any]) -> str:
     return fallback
 
 
+def _extract_status_totals(payload: dict[str, Any]) -> dict[str, Any] | None:
+    totals = payload.get("totals")
+    if isinstance(totals, dict):
+        tokens = totals.get("tokens")
+        token_payload = tokens if isinstance(tokens, dict) else totals
+        return {
+            "tokens": {
+                "input": _first_int(token_payload, "input", "inputTokens", "promptTokens", "prompt_tokens", default=0),
+                "output": _first_int(token_payload, "output", "outputTokens", "completionTokens", "completion_tokens", default=0),
+                "reasoning": _first_int(token_payload, "reasoning", "reasoningTokens", "thinkingTokens", default=0),
+                "cacheRead": _first_int(token_payload, "cacheRead", "cache_read", "cacheReadTokens", default=0),
+                "cacheWrite": _first_int(token_payload, "cacheWrite", "cache_write", "cacheWriteTokens", default=0),
+            },
+            "cost": _first_float(totals, "cost", default=0.0),
+        }
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        return {
+            "tokens": {
+                "input": _first_int(usage, "input", "inputTokens", "promptTokens", "prompt_tokens", default=0),
+                "output": _first_int(usage, "output", "outputTokens", "completionTokens", "completion_tokens", default=0),
+                "reasoning": _first_int(usage, "reasoning", "reasoningTokens", "thinkingTokens", default=0),
+                "cacheRead": _first_int(usage, "cacheRead", "cache_read", "cacheReadTokens", default=0),
+                "cacheWrite": _first_int(usage, "cacheWrite", "cache_write", "cacheWriteTokens", default=0),
+            },
+            "cost": _first_float(usage, "cost", default=0.0),
+        }
+    return None
+
+
+def _extract_status_limits(payload: dict[str, Any], *, default_context_window: int) -> dict[str, Any] | None:
+    limits = payload.get("limits")
+    if isinstance(limits, dict):
+        context_window = _first_int(limits, "contextWindow", "context_window", "window", default=default_context_window)
+        used = _first_int(limits, "used", "usedTokens", "used_tokens", "totalTokens", default=0)
+        percent = _first_float(limits, "percent", "usagePercent", "usage_ratio", default=None)
+        if percent is None and context_window and context_window > 0:
+            percent = round(float(used) / float(context_window), 4)
+        return {"contextWindow": context_window, "used": used, "percent": percent}
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        context_window = _first_int(payload, "contextWindow", "context_window", "window", default=default_context_window)
+        used = _first_int(usage, "totalTokens", "used", "usedTokens", default=0)
+        percent = _first_float(usage, "percent", "usagePercent", "usage_ratio", default=None)
+        if percent is None and context_window and context_window > 0:
+            percent = round(float(used) / float(context_window), 4)
+        return {"contextWindow": context_window, "used": used, "percent": percent}
+    return None
+
+
+def _first_int(payload: dict[str, Any], *keys: str, default: int | None) -> int | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        try:
+            if value is None:
+                continue
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _first_float(payload: dict[str, Any], *keys: str, default: float | None) -> float | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        try:
+            if value is None:
+                continue
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
 class OpenCodeSessionRuntime:
     name = "opencode"
 
@@ -421,8 +517,9 @@ class OpenCodeSessionRuntime:
         zephyr_auth: dict[str, Any] | None = None,
         jira_instance: str | None = None,
     ) -> dict[str, Any]:
+        normalized_project_root = str(Path(project_root).expanduser().resolve())
         payload, reused = self.state_store.create_session(
-            project_root=project_root,
+            project_root=normalized_project_root,
             source=source,
             profile=profile,
             runtime=self.name,

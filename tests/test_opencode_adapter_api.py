@@ -75,6 +75,7 @@ def _write_fake_runner(path: Path) -> None:
             artifact_dir.mkdir(parents=True, exist_ok=True)
             artifact_path = artifact_dir / "notes.log"
             artifact_path.write_text(f"log for {prompt}", encoding="utf-8")
+            print("stderr trace line", file=sys.stderr, flush=True)
             print(
                 json.dumps(
                     {
@@ -96,6 +97,11 @@ def _write_fake_runner(path: Path) -> None:
                         "status": "succeeded",
                         "sessionId": session_id,
                         "currentAction": "Completed",
+                        "totals": {
+                            "tokens": {"input": 70, "output": 40, "reasoning": 10, "cacheRead": 0, "cacheWrite": 0},
+                            "cost": 0.0,
+                        },
+                        "limits": {"contextWindow": 200000, "used": 120, "percent": 0.0006},
                         "output": {
                             "summary": f"done: {prompt}",
                             "sessionId": session_id,
@@ -159,6 +165,8 @@ def test_create_run_reports_success_and_artifacts(tmp_path: Path) -> None:
     assert payload["backendSessionId"].startswith("session-")
     assert payload["output"]["summary"] == "done: hello adapter"
     assert payload["output"]["model"] is None
+    assert payload["totals"]["tokens"]["input"] == 70
+    assert payload["limits"]["percent"] == 0.0006
     names = {item["name"] for item in payload["artifacts"]}
     assert {"notes.log", "summary.txt", "stderr.log"}.issubset(names)
 
@@ -246,6 +254,41 @@ def test_second_run_reuses_backend_session_id(tmp_path: Path) -> None:
     ).json()
     second_status = client.get(f"/v1/runs/{second['backendRunId']}").json()
     assert second_status["backendSessionId"] == first_status["backendSessionId"]
+
+
+def test_ide_plugin_rejects_project_root_mismatch_for_same_external_session(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root_a = tmp_path / "project-a"
+    project_root_b = tmp_path / "project-b"
+    project_root_a.mkdir()
+    project_root_b.mkdir()
+
+    first = client.post(
+        "/v1/runs",
+        json={
+            "runId": "run-first-mismatch",
+            "sessionId": "session-shared",
+            "projectRoot": str(project_root_a),
+            "prompt": "first",
+            "source": "ide-plugin",
+        },
+    )
+    assert first.status_code == 200
+    _wait_until(lambda: client.get(f"/v1/runs/{first.json()['backendRunId']}").json()["status"] == "succeeded")
+
+    second = client.post(
+        "/v1/runs",
+        json={
+            "runId": "run-second-mismatch",
+            "sessionId": "session-shared",
+            "projectRoot": str(project_root_b),
+            "prompt": "second",
+            "source": "ide-plugin",
+        },
+    )
+
+    assert second.status_code == 422
+    assert "projectRoot mismatch for existing sessionId" in second.json()["detail"]
 
 
 def test_startup_timeout_marks_run_failed(tmp_path: Path) -> None:

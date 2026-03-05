@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 import itertools
@@ -43,8 +44,22 @@ class OpenCodeAdapterService:
         backend_session_id = request.backend_session_id
         if not backend_session_id and request.session_id:
             session_mapping = self._state_store.get_session_mapping(request.session_id)
-            if session_mapping and session_mapping.get("project_root") == project_root:
-                backend_session_id = str(session_mapping.get("backend_session_id") or "").strip() or None
+            if session_mapping:
+                mapped_project_root = str(session_mapping.get("project_root") or "").strip()
+                if (
+                    str(request.source or "").strip().lower() == "ide-plugin"
+                    and mapped_project_root
+                    and _normalized_path(mapped_project_root) != _normalized_path(project_root)
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "projectRoot mismatch for existing sessionId: "
+                            f"expected {mapped_project_root}, got {project_root}"
+                        ),
+                    )
+                if mapped_project_root and _normalized_path(mapped_project_root) == _normalized_path(project_root):
+                    backend_session_id = str(session_mapping.get("backend_session_id") or "").strip() or None
 
         backend_run_id = f"oc-adapter-{next(self._id_counter)}"
         now = utcnow().isoformat()
@@ -97,6 +112,8 @@ class OpenCodeAdapterService:
             output=run.get("output"),
             artifacts=run.get("artifacts") or [],
             pendingApprovals=run.get("pending_approvals") or [],
+            totals=run.get("totals"),
+            limits=run.get("limits"),
             createdAt=run["created_at"],
             startedAt=run.get("started_at"),
             finishedAt=run.get("finished_at"),
@@ -156,3 +173,7 @@ class OpenCodeAdapterService:
         if not run:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run not found: {backend_run_id}")
         return run
+
+
+def _normalized_path(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))

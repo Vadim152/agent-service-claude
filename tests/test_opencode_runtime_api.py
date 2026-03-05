@@ -66,6 +66,11 @@ class _FakeOpenCodeAdapter:
     def get_run(self, backend_run_id: str) -> dict[str, object]:
         run = self.runs[backend_run_id]
         run["polls"] = int(run.get("polls", 0)) + 1
+        usage_totals = {
+            "tokens": {"input": 120, "output": 80, "reasoning": 20, "cacheRead": 0, "cacheWrite": 0},
+            "cost": 0.0,
+        }
+        usage_limits = {"contextWindow": 200000, "used": 220, "percent": 0.0011}
         if bool(run.get("cancelled")):
             return {
                 "backendRunId": backend_run_id,
@@ -73,6 +78,8 @@ class _FakeOpenCodeAdapter:
                 "currentAction": "Cancelled",
                 "output": {"summary": "OpenCode run was cancelled."},
                 "pendingApprovals": [],
+                "totals": usage_totals,
+                "limits": usage_limits,
             }
         if run.get("pendingApprovals") and not bool(run.get("approved")):
             return {
@@ -80,6 +87,8 @@ class _FakeOpenCodeAdapter:
                 "status": "running",
                 "currentAction": "Awaiting approval",
                 "pendingApprovals": list(run.get("pendingApprovals") or []),
+                "totals": usage_totals,
+                "limits": usage_limits,
             }
         if int(run.get("polls", 0)) >= 2:
             return {
@@ -89,12 +98,16 @@ class _FakeOpenCodeAdapter:
                 "output": {"summary": f"OpenCode finished: {run['prompt']}"},
                 "artifacts": [{"name": "stdout.log", "uri": f"https://obj.local/{backend_run_id}/stdout.log"}],
                 "pendingApprovals": [],
+                "totals": usage_totals,
+                "limits": usage_limits,
             }
         return {
             "backendRunId": backend_run_id,
             "status": "running",
             "currentAction": "Executing OpenCode run",
             "pendingApprovals": [],
+            "totals": usage_totals,
+            "limits": usage_limits,
         }
 
     def list_events(self, backend_run_id: str, *, after: int | str | None) -> dict[str, object]:
@@ -174,17 +187,34 @@ def _build_app() -> FastAPI:
 
 def test_opencode_sessions_are_separate_from_chat_sessions() -> None:
     client = TestClient(_build_app())
+    project_root = str(Path(tempfile.mkdtemp(prefix="opencode-shared-root-")).resolve())
 
-    chat_session = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "chat"}).json()
-    opencode_session = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()
+    chat_session = client.post("/sessions", json={"projectRoot": project_root, "runtime": "chat"}).json()
+    opencode_session = client.post("/sessions", json={"projectRoot": project_root, "runtime": "opencode"}).json()
 
     assert chat_session["runtime"] == "chat"
     assert opencode_session["runtime"] == "opencode"
     assert chat_session["sessionId"] != opencode_session["sessionId"]
 
-    listing = client.get("/sessions", params={"projectRoot": "/tmp/project"}).json()
+    listing = client.get("/sessions", params={"projectRoot": project_root}).json()
     runtimes = {item["runtime"] for item in listing["items"]}
     assert {"chat", "opencode"}.issubset(runtimes)
+
+
+def test_opencode_session_normalizes_project_root() -> None:
+    client = TestClient(_build_app())
+    project_root = Path(tempfile.mkdtemp(prefix="opencode-project-root-")).resolve()
+    raw_project_root = str(project_root / "." / ".." / project_root.name)
+
+    session = client.post(
+        "/sessions",
+        json={"projectRoot": raw_project_root, "runtime": "opencode"},
+    )
+    assert session.status_code == 200
+    session_id = session.json()["sessionId"]
+
+    history = client.get(f"/sessions/{session_id}/history").json()
+    assert history["projectRoot"] == str(project_root)
 
 
 def test_opencode_message_creates_delegated_run_and_updates_history() -> None:
@@ -203,6 +233,10 @@ def test_opencode_message_creates_delegated_run_and_updates_history() -> None:
     status = client.get(f"/sessions/{session_id}/status").json()
     assert status["runtime"] == "opencode"
     assert status["activeRunBackend"] == "opencode-adapter"
+    assert status["totals"]["tokens"]["input"] == 120
+    assert status["totals"]["tokens"]["output"] == 80
+    assert status["totals"]["tokens"]["reasoning"] == 20
+    assert status["limits"]["percent"] == 0.0011
     run_id = status["activeRunId"]
 
     run_payload = client.get(f"/runs/{run_id}").json()

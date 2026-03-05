@@ -295,6 +295,11 @@ class OpenCodeProcessSupervisor:
         patches: dict[str, Any] = {}
         canonical_event = "run.progress"
         event_payload: dict[str, Any] = {"backendRunId": backend_run_id, "sessionId": session_id, "payload": payload}
+        totals, limits = _extract_usage_limits(payload)
+        if totals is not None:
+            patches["totals"] = totals
+        if limits is not None:
+            patches["limits"] = limits
 
         if event_type == "session.status":
             status = ((payload.get("properties") or {}).get("status") or {}).get("type")
@@ -422,6 +427,7 @@ class OpenCodeProcessSupervisor:
             text_artifact = self._materialize_inline_artifact(artifacts_dir, "assistant.txt", text, "text/plain")
             artifacts = [item for item in artifacts if item.get("name") != text_artifact["name"]]
             artifacts.append(text_artifact)
+        totals, limits = _extract_usage_limits(response)
         self._state_store.patch_run(
             backend_run_id,
             status="succeeded",
@@ -432,6 +438,8 @@ class OpenCodeProcessSupervisor:
             pending_approvals=[],
             finished_at=utcnow().isoformat(),
             exit_code=0,
+            totals=totals,
+            limits=limits,
         )
         self._state_store.append_event(
             backend_run_id,
@@ -638,6 +646,11 @@ class OpenCodeProcessSupervisor:
         status = normalize_status(payload.get("status"))
         current_action = str(payload.get("currentAction") or payload.get("message") or event_type)
         patches: dict[str, Any] = {"current_action": current_action}
+        totals, limits = _extract_usage_limits(payload)
+        if totals is not None:
+            patches["totals"] = totals
+        if limits is not None:
+            patches["limits"] = limits
 
         approvals = _extract_approvals(payload)
         if approvals:
@@ -896,6 +909,118 @@ def _extract_response_error(response: Any) -> dict[str, Any] | None:
     if not isinstance(error, dict):
         return None
     return error
+
+
+def _extract_usage_limits(payload: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    candidates: list[dict[str, Any]] = [payload]
+    properties = payload.get("properties")
+    if isinstance(properties, dict):
+        candidates.append(properties)
+        status_block = properties.get("status")
+        if isinstance(status_block, dict):
+            candidates.append(status_block)
+    message = payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message)
+
+    totals: dict[str, Any] | None = None
+    limits: dict[str, Any] | None = None
+    for item in candidates:
+        if totals is None:
+            totals = _extract_totals(item)
+        if limits is None:
+            limits = _extract_limits(item)
+    return totals, limits
+
+
+def _extract_totals(payload: dict[str, Any]) -> dict[str, Any] | None:
+    totals = payload.get("totals")
+    if isinstance(totals, dict):
+        return {
+            "tokens": _normalize_tokens(totals.get("tokens") if isinstance(totals.get("tokens"), dict) else totals),
+            "cost": _to_float(totals.get("cost"), default=0.0),
+        }
+
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        return {
+            "tokens": _normalize_tokens(usage),
+            "cost": _to_float(usage.get("cost"), default=0.0),
+        }
+    return None
+
+
+def _extract_limits(payload: dict[str, Any]) -> dict[str, Any] | None:
+    limits = payload.get("limits")
+    if isinstance(limits, dict):
+        context_window = _first_int(limits, "contextWindow", "context_window", "window")
+        used = _first_int(limits, "used", "usedTokens", "used_tokens", "inputTokens", "totalTokens", default=0)
+        percent = _first_float(limits, "percent", "usagePercent", "usage_ratio")
+        if percent is None and context_window and context_window > 0:
+            percent = round(float(used) / float(context_window), 4)
+        return {"contextWindow": context_window, "used": used, "percent": percent}
+
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        context_window = _first_int(payload, "contextWindow", "context_window", "window")
+        if context_window is None:
+            context_window = _first_int(usage, "contextWindow", "context_window", "window")
+        used = _first_int(usage, "totalTokens", "used", "usedTokens", default=0)
+        percent = _first_float(usage, "percent", "usagePercent", "usage_ratio")
+        if percent is None and context_window and context_window > 0:
+            percent = round(float(used) / float(context_window), 4)
+        return {"contextWindow": context_window, "used": used, "percent": percent}
+    return None
+
+
+def _normalize_tokens(tokens: dict[str, Any] | None) -> dict[str, int]:
+    payload = tokens if isinstance(tokens, dict) else {}
+    return {
+        "input": _first_int(payload, "input", "inputTokens", "promptTokens", "prompt_tokens", default=0),
+        "output": _first_int(payload, "output", "outputTokens", "completionTokens", "completion_tokens", default=0),
+        "reasoning": _first_int(payload, "reasoning", "reasoningTokens", "thinkingTokens", default=0),
+        "cacheRead": _first_int(payload, "cacheRead", "cache_read", "cacheReadTokens", default=0),
+        "cacheWrite": _first_int(payload, "cacheWrite", "cache_write", "cacheWriteTokens", default=0),
+    }
+
+
+def _first_int(payload: dict[str, Any], *keys: str, default: int | None = None) -> int | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        try:
+            if value is None:
+                continue
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _first_float(payload: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        try:
+            if value is None:
+                continue
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _to_float(value: Any, *, default: float) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _is_token_expired_error_response(response: Any) -> bool:

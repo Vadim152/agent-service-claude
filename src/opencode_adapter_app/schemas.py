@@ -36,6 +36,11 @@ class AdapterApprovalDto(ApiBaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AdapterApprovalStatusDto(AdapterApprovalDto):
+    status: Literal["pending", "approved", "denied"]
+    updated_at: datetime = Field(..., alias="updatedAt")
+
+
 class AdapterRunStatusResponse(ApiBaseModel):
     backend_run_id: str = Field(..., alias="backendRunId")
     backend_session_id: str | None = Field(default=None, alias="backendSessionId")
@@ -45,6 +50,7 @@ class AdapterRunStatusResponse(ApiBaseModel):
     output: dict[str, Any] | None = None
     artifacts: list[AdapterArtifactDto] = Field(default_factory=list)
     pending_approvals: list[AdapterApprovalDto] = Field(default_factory=list, alias="pendingApprovals")
+    approvals: list[AdapterApprovalStatusDto] = Field(default_factory=list)
     totals: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
     created_at: datetime = Field(..., alias="createdAt")
@@ -73,6 +79,7 @@ class AdapterRunEventDto(ApiBaseModel):
 class AdapterRunEventsResponse(ApiBaseModel):
     items: list[AdapterRunEventDto] = Field(default_factory=list)
     next_cursor: int = Field(..., alias="nextCursor")
+    has_more: bool = Field(default=False, alias="hasMore")
 
 
 class AdapterRunCancelResponse(ApiBaseModel):
@@ -90,6 +97,48 @@ class AdapterApprovalDecisionResponse(ApiBaseModel):
     approval_id: str = Field(..., alias="approvalId")
     decision: str
     status: str
+    updated_at: datetime = Field(..., alias="updatedAt")
+
+
+class AdapterSessionEnsureRequest(ApiBaseModel):
+    external_session_id: str = Field(..., alias="externalSessionId")
+    project_root: str = Field(..., alias="projectRoot")
+    source: str | None = None
+    profile: str | None = None
+
+
+class AdapterSessionDto(ApiBaseModel):
+    external_session_id: str = Field(..., alias="externalSessionId")
+    backend_session_id: str | None = Field(default=None, alias="backendSessionId")
+    project_root: str = Field(..., alias="projectRoot")
+    last_backend_run_id: str | None = Field(default=None, alias="lastBackendRunId")
+    status: str = "idle"
+    current_action: str = Field(default="Idle", alias="currentAction")
+    last_activity_at: datetime | None = Field(default=None, alias="lastActivityAt")
+    last_compaction_at: datetime | None = Field(default=None, alias="lastCompactionAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+    last_provider_id: str | None = Field(default=None, alias="lastProviderId")
+    last_model_id: str | None = Field(default=None, alias="lastModelId")
+
+
+class AdapterSessionDiffResponse(ApiBaseModel):
+    external_session_id: str = Field(..., alias="externalSessionId")
+    backend_session_id: str | None = Field(default=None, alias="backendSessionId")
+    summary: dict[str, Any] = Field(default_factory=dict)
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    stale: bool = False
+    updated_at: datetime = Field(..., alias="updatedAt")
+
+
+class AdapterSessionCommandRequest(ApiBaseModel):
+    command: Literal["status", "diff", "compact", "abort", "help"]
+
+
+class AdapterSessionCommandResponse(ApiBaseModel):
+    external_session_id: str = Field(..., alias="externalSessionId")
+    command: str
+    accepted: bool = True
+    result: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(..., alias="updatedAt")
 
 

@@ -68,11 +68,24 @@ def _resolve_runtime_for_session(request: Request, session_id: str):
         try:
             return registry.resolve_session(session_id)
         except ChatRuntimeError as exc:
-            raise _runtime_to_http_error(exc) from exc
+            raise _runtime_to_http_error(exc, request) from exc
     return _get_runtime(request)
 
 
-def _runtime_to_http_error(exc: ChatRuntimeError) -> HTTPException:
+def _runtime_to_http_error(exc: ChatRuntimeError, request: Request) -> HTTPException:
+    if exc.code:
+        return HTTPException(
+            status_code=exc.status_code or status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "retryable": bool(exc.retryable),
+                    "details": dict(exc.details or {}),
+                    "requestId": exc.request_id or getattr(request.state, "request_id", None),
+                }
+            },
+        )
     if exc.status_code == 404:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if exc.status_code == 422:
@@ -140,7 +153,7 @@ async def create_session(payload: ChatSessionCreateRequest, request: Request) ->
             jira_instance=payload.jira_instance,
         )
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     return ChatSessionCreateResponse(
         session_id=str(session["sessionId"]),
@@ -158,7 +171,7 @@ async def list_sessions(request: Request, projectRoot: str, limit: int = 50) -> 
     try:
         payload = await runtime.list_sessions(project_root=projectRoot, limit=bounded_limit)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     items = [
         ChatSessionListItemDto(
@@ -193,7 +206,7 @@ async def send_message(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
         status_payload = await runtime.get_status(session_id=session_id)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     activity = str(status_payload.get("activity", "idle")).strip().lower()
     if activity in {"busy", "waiting_permission", "retry"}:
@@ -228,7 +241,7 @@ async def get_history(session_id: str, request: Request, limit: int = 200) -> Ch
     try:
         history = await runtime.get_history(session_id=session_id, limit=limit)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     return ChatHistoryResponse(
         session_id=history["sessionId"],
@@ -252,7 +265,7 @@ async def get_status(session_id: str, request: Request) -> ChatSessionStatusResp
         status_payload = await runtime.get_status(session_id=session_id)
         diff_payload = await runtime.get_diff(session_id=session_id)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     summary = diff_payload.get("summary", {})
     pending_permissions_count = int(status_payload.get("pendingPermissionsCount", 0))
@@ -306,7 +319,7 @@ async def get_diff(session_id: str, request: Request) -> ChatSessionDiffResponse
         diff_payload = await runtime.get_diff(session_id=session_id)
         status_payload = await runtime.get_status(session_id=session_id)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     summary = ChatDiffSummaryDto(
         files=int(diff_payload.get("summary", {}).get("files", 0)),
@@ -337,7 +350,7 @@ async def execute_command(session_id: str, payload: ChatCommandRequest, request:
         status_payload = await runtime.get_status(session_id=session_id)
         diff_payload = await runtime.get_diff(session_id=session_id)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
 
     risk = _build_risk(
         pending_permissions_count=int(status_payload.get("pendingPermissionsCount", 0)),
@@ -361,7 +374,7 @@ async def stream_events(session_id: str, request: Request, fromIndex: int = 0):
     try:
         exists = await runtime.has_session(session_id)
     except ChatRuntimeError as exc:
-        raise _runtime_to_http_error(exc) from exc
+        raise _runtime_to_http_error(exc, request) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 

@@ -42,6 +42,9 @@ class AdapterSettings(BaseSettings):
     server_port: int = Field(default=4096)
     print_logs: bool = Field(default=False)
     work_root: Path = Field(default=ROOT_DIR / ".agent" / "opencode-adapter")
+    state_backend: str = Field(default="sqlite")
+    state_file: Path | None = Field(default=None)
+    session_retention_hours: int = Field(default=720)
     inline_artifact_max_bytes: int = Field(default=65_536)
     graceful_kill_timeout_ms: int = Field(default=3_000)
     run_start_timeout_ms: int = Field(default=10_000)
@@ -95,16 +98,23 @@ class AdapterSettings(BaseSettings):
             raise ValueError("model_override must be set when model_mode=override")
         if self.server_port < 1:
             raise ValueError("server_port must be >= 1")
+        self.state_backend = self.state_backend.strip().lower()
+        if self.state_backend not in {"sqlite", "memory"}:
+            raise ValueError("state_backend must be one of: sqlite, memory")
         if self.inline_artifact_max_bytes < 1:
             raise ValueError("inline_artifact_max_bytes must be >= 1")
         if self.graceful_kill_timeout_ms < 1:
             raise ValueError("graceful_kill_timeout_ms must be >= 1")
         if self.max_events_per_run < 1:
             raise ValueError("max_events_per_run must be >= 1")
+        if self.session_retention_hours < 1:
+            raise ValueError("session_retention_hours must be >= 1")
         if not self.binary.strip():
             raise ValueError("binary must not be empty")
         self.work_root = Path(self.work_root)
         self.work_root.mkdir(parents=True, exist_ok=True)
+        if self.state_file is not None:
+            self.state_file = Path(self.state_file)
         return self
 
     @property
@@ -178,6 +188,12 @@ class AdapterSettings(BaseSettings):
         root = self.work_root / "xdg"
         root.mkdir(parents=True, exist_ok=True)
         return root
+
+    @property
+    def resolved_state_file(self) -> Path | None:
+        if self.state_backend == "memory":
+            return None
+        return Path(self.state_file) if self.state_file is not None else self.work_root / "state.sqlite3"
 
     def xdg_env(self) -> dict[str, str]:
         mapping = {

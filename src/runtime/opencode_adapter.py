@@ -9,6 +9,23 @@ import httpx
 class OpenCodeAdapterError(RuntimeError):
     """Raised when the OpenCode adapter call fails."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.retryable = retryable
+        self.details = details or {}
+        self.request_id = request_id
+
 
 class HttpOpenCodeAdapterClient:
     def __init__(self, *, base_url: str, timeout_s: float = 30.0) -> None:
@@ -32,13 +49,49 @@ class HttpOpenCodeAdapterClient:
                 params=params,
                 timeout=self._timeout_s,
             )
-            response.raise_for_status()
-            data = response.json()
         except Exception as exc:
-            raise OpenCodeAdapterError(f"OpenCode adapter request failed: {exc}") from exc
-        if not isinstance(data, dict):
-            raise OpenCodeAdapterError("OpenCode adapter returned non-object response")
-        return data
+            raise OpenCodeAdapterError(
+                f"OpenCode adapter request failed: {exc}",
+                status_code=503,
+                code="backend_unavailable",
+                retryable=True,
+            ) from exc
+
+        request_id = str(response.headers.get("X-Request-Id") or "").strip() or None
+        try:
+            data = response.json() if response.content else {}
+        except Exception:
+            data = {}
+
+        if response.is_success:
+            if not isinstance(data, dict):
+                raise OpenCodeAdapterError(
+                    "OpenCode adapter returned non-object response",
+                    status_code=502,
+                    code="backend_unavailable",
+                    retryable=False,
+                    request_id=request_id,
+                )
+            return data
+
+        error_payload = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error_payload, dict):
+            raise OpenCodeAdapterError(
+                str(error_payload.get("message") or f"OpenCode adapter request failed: HTTP {response.status_code}"),
+                status_code=response.status_code,
+                code=str(error_payload.get("code") or ""),
+                retryable=bool(error_payload.get("retryable", False)),
+                details=dict(error_payload.get("details") or {}),
+                request_id=str(error_payload.get("requestId") or request_id or "").strip() or None,
+            )
+
+        raise OpenCodeAdapterError(
+            response.text or f"OpenCode adapter request failed: HTTP {response.status_code}",
+            status_code=response.status_code,
+            code="backend_unavailable" if response.status_code >= 500 else None,
+            retryable=response.status_code >= 500,
+            request_id=request_id,
+        )
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/v1/runs", json_payload=payload)
@@ -46,10 +99,12 @@ class HttpOpenCodeAdapterClient:
     def get_run(self, backend_run_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/runs/{backend_run_id}")
 
-    def list_events(self, backend_run_id: str, *, after: int | str | None) -> dict[str, Any]:
-        params = {}
+    def list_events(self, backend_run_id: str, *, after: int | str | None, limit: int | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {}
         if after not in {None, ""}:
             params["after"] = after
+        if limit is not None:
+            params["limit"] = limit
         return self._request("GET", f"/v1/runs/{backend_run_id}/events", params=params or None)
 
     def cancel_run(self, backend_run_id: str) -> dict[str, Any]:
@@ -60,4 +115,23 @@ class HttpOpenCodeAdapterClient:
             "POST",
             f"/v1/runs/{backend_run_id}/approvals/{approval_id}",
             json_payload={"decision": decision},
+        )
+
+    def ensure_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/v1/sessions", json_payload=payload)
+
+    def get_session(self, external_session_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/sessions/{external_session_id}")
+
+    def compact_session(self, external_session_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/v1/sessions/{external_session_id}/compact", json_payload={})
+
+    def get_session_diff(self, external_session_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/sessions/{external_session_id}/diff")
+
+    def execute_session_command(self, external_session_id: str, command: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v1/sessions/{external_session_id}/commands",
+            json_payload={"command": command},
         )

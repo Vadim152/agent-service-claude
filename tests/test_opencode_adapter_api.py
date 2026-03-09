@@ -117,16 +117,21 @@ def _write_fake_runner(path: Path) -> None:
     )
 
 
-def _build_client(tmp_path: Path) -> TestClient:
+def _build_settings(tmp_path: Path, *, max_events_per_run: int = 5_000) -> AdapterSettings:
     runner = tmp_path / "fake_runner.py"
     _write_fake_runner(runner)
-    settings = AdapterSettings(
+    return AdapterSettings(
         binary=sys.executable,
         binary_args_json=json.dumps([str(runner)]),
         runner_type="raw_json_runner",
         print_logs=False,
         work_root=tmp_path / "adapter-work",
+        max_events_per_run=max_events_per_run,
     )
+
+
+def _build_client(tmp_path: Path, *, max_events_per_run: int = 5_000) -> TestClient:
+    settings = _build_settings(tmp_path, max_events_per_run=max_events_per_run)
     return TestClient(create_app(settings))
 
 
@@ -288,7 +293,7 @@ def test_ide_plugin_rejects_project_root_mismatch_for_same_external_session(tmp_
     )
 
     assert second.status_code == 422
-    assert "projectRoot mismatch for existing sessionId" in second.json()["detail"]
+    assert "projectRoot mismatch for existing sessionId" in second.json()["error"]["message"]
 
 
 def test_startup_timeout_marks_run_failed(tmp_path: Path) -> None:
@@ -378,6 +383,213 @@ def test_override_mode_requires_model_override() -> None:
         assert "model_override must be set" in str(exc)
     else:
         raise AssertionError("Expected AdapterSettings to reject override mode without model_override")
+
+
+def test_session_endpoints_reuse_mapping_and_compact_noop(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    first = client.post(
+        "/v1/sessions",
+        json={"externalSessionId": "session-a", "projectRoot": str(project_root), "source": "ide-plugin", "profile": "agent"},
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/v1/sessions",
+        json={"externalSessionId": "session-a", "projectRoot": str(project_root), "source": "ide-plugin", "profile": "agent"},
+    )
+    assert second.status_code == 200
+    assert second.json()["backendSessionId"] == first.json()["backendSessionId"]
+
+    diff = client.get("/v1/sessions/session-a/diff")
+    assert diff.status_code == 200
+    assert diff.json()["summary"]["files"] == 0
+
+    compact = client.post("/v1/sessions/session-a/compact")
+    assert compact.status_code == 200
+    assert compact.json()["result"]["status"] == "completed"
+
+    compact_again = client.post("/v1/sessions/session-a/compact")
+    assert compact_again.status_code == 200
+    assert compact_again.json()["result"]["status"] == "noop"
+
+
+def test_session_compact_conflicts_while_run_is_active(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    client.post(
+        "/v1/sessions",
+        json={"externalSessionId": "session-a", "projectRoot": str(project_root), "source": "ide-plugin", "profile": "agent"},
+    )
+    created = client.post(
+        "/v1/runs",
+        json={"runId": "run-active", "sessionId": "session-a", "projectRoot": str(project_root), "prompt": "need approval"},
+    )
+    backend_run_id = created.json()["backendRunId"]
+    _wait_until(lambda: bool(client.get(f"/v1/runs/{backend_run_id}").json()["pendingApprovals"]))
+
+    response = client.post("/v1/sessions/session-a/compact")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "session_busy"
+
+
+def test_session_diff_returns_unavailable_when_snapshot_missing(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    client.post(
+        "/v1/sessions",
+        json={"externalSessionId": "session-a", "projectRoot": str(project_root), "source": "ide-plugin", "profile": "agent"},
+    )
+    store = client.app.state.opencode_adapter_state_store
+    store._conn.execute("DELETE FROM session_diffs WHERE external_session_id = ?", ("session-a",))
+    store._conn.commit()
+
+    response = client.get("/v1/sessions/session-a/diff")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "diff_unavailable"
+
+
+def test_run_events_expose_has_more_and_stale_cursor(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path, max_events_per_run=2)
+    app = create_app(settings)
+    store = app.state.opencode_adapter_state_store
+    now = "2026-03-09T00:00:00+00:00"
+    store.create_run(
+        {
+            "backend_run_id": "manual-run",
+            "external_run_id": "manual-run",
+            "external_session_id": None,
+            "backend_session_id": None,
+            "project_root": str(tmp_path / "project"),
+            "prompt": "manual",
+            "source": "test",
+            "profile": "agent",
+            "config_profile": "default",
+            "policy_mode": None,
+            "status": "running",
+            "current_action": "Running",
+            "result": None,
+            "output": None,
+            "artifacts": [],
+            "pending_approvals": [],
+            "cancel_requested": False,
+            "exit_code": None,
+            "created_at": now,
+            "started_at": now,
+            "finished_at": None,
+            "updated_at": now,
+            "work_dir": str(tmp_path / "manual"),
+        }
+    )
+    store.append_event("manual-run", "run.progress", {"step": 1})
+    store.append_event("manual-run", "run.progress", {"step": 2})
+    store.append_event("manual-run", "run.progress", {"step": 3})
+    client = TestClient(app)
+
+    page = client.get("/v1/runs/manual-run/events", params={"after": 1, "limit": 1})
+    assert page.status_code == 200
+    assert page.json()["hasMore"] is True
+    assert page.json()["nextCursor"] == 2
+
+    stale = client.get("/v1/runs/manual-run/events", params={"after": 0, "limit": 10})
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale_cursor"
+
+
+def test_get_run_exposes_multiple_pending_approvals(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    app = create_app(settings)
+    store = app.state.opencode_adapter_state_store
+    now = "2026-03-09T00:00:00+00:00"
+    store.create_run(
+        {
+            "backend_run_id": "approval-run",
+            "external_run_id": "approval-run",
+            "external_session_id": "session-a",
+            "backend_session_id": "session-1",
+            "project_root": str(tmp_path / "project"),
+            "prompt": "manual",
+            "source": "test",
+            "profile": "agent",
+            "config_profile": "default",
+            "policy_mode": None,
+            "status": "running",
+            "current_action": "Awaiting approval",
+            "result": None,
+            "output": None,
+            "artifacts": [],
+            "pending_approvals": [],
+            "cancel_requested": False,
+            "exit_code": None,
+            "created_at": now,
+            "started_at": now,
+            "finished_at": None,
+            "updated_at": now,
+            "work_dir": str(tmp_path / "manual"),
+        }
+    )
+    store.record_pending_approvals(
+        "approval-run",
+        [
+            {"approvalId": "approval-1", "toolName": "repo.write", "title": "Write 1", "riskLevel": "high"},
+            {"approvalId": "approval-2", "toolName": "repo.write", "title": "Write 2", "riskLevel": "high"},
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get("/v1/runs/approval-run")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["pendingApprovals"]) == 2
+    assert [item["status"] for item in payload["approvals"]] == ["pending", "pending"]
+
+
+def test_adapter_restart_marks_inflight_runs_failed(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    app = create_app(settings)
+    store = app.state.opencode_adapter_state_store
+    now = "2026-03-09T00:00:00+00:00"
+    store.create_run(
+        {
+            "backend_run_id": "restart-run",
+            "external_run_id": "restart-run",
+            "external_session_id": "session-a",
+            "backend_session_id": "session-1",
+            "project_root": str(tmp_path / "project"),
+            "prompt": "manual",
+            "source": "test",
+            "profile": "agent",
+            "config_profile": "default",
+            "policy_mode": None,
+            "status": "running",
+            "current_action": "Running",
+            "result": None,
+            "output": None,
+            "artifacts": [],
+            "pending_approvals": [],
+            "cancel_requested": False,
+            "exit_code": None,
+            "created_at": now,
+            "started_at": now,
+            "finished_at": None,
+            "updated_at": now,
+            "work_dir": str(tmp_path / "manual"),
+        }
+    )
+    store.close()
+
+    with TestClient(create_app(settings)) as client:
+        payload = client.get("/v1/runs/restart-run").json()
+
+        assert payload["status"] == "failed"
+        assert payload["output"]["error"]["code"] == "adapter_restarted"
 
 
 def test_debug_runtime_reports_adapter_snapshot(tmp_path: Path) -> None:

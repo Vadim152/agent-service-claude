@@ -39,6 +39,10 @@ class OpenCodeProcessSupervisor:
     def cancel_run(self, backend_run_id: str) -> dict[str, Any]:
         run = self._state_store.get_run(backend_run_id) or {}
         self._state_store.patch_run(backend_run_id, cancel_requested=True, current_action="Cancelling")
+        for item in run.get("pending_approvals") or []:
+            approval_id = str(item.get("approval_id") or item.get("approvalId") or "").strip()
+            if approval_id:
+                self._state_store.resolve_approval(backend_run_id, approval_id, "deny")
         if self._settings.runner_type == "raw_json_runner":
             self._cancel_raw_process(backend_run_id)
         else:
@@ -73,14 +77,18 @@ class OpenCodeProcessSupervisor:
         try:
             self._headless_server.request(
                 "POST",
-                f"/permission/{approval_id}/reply",
+                f"/session/{current.get('backend_session_id')}/permissions/{approval_id}",
                 params={"directory": current.get("project_root")},
-                json_payload={"reply": reply},
+                json_payload={"response": reply},
                 timeout_s=10.0,
             )
         except OpenCodeServerError as exc:
             LOGGER.warning("Failed to reply to OpenCode approval %s: %s", approval_id, exc)
-        remaining = [item for item in current.get("pending_approvals") or [] if str(item.get("approval_id") or item.get("approvalId") or "") != approval_id]
+        remaining = [
+            item
+            for item in current.get("pending_approvals") or []
+            if str(item.get("approval_id") or item.get("approvalId") or "") != approval_id
+        ]
         updated = self._state_store.patch_run(
             backend_run_id,
             pending_approvals=remaining,
@@ -93,6 +101,48 @@ class OpenCodeProcessSupervisor:
             {"backendRunId": backend_run_id, "approvalId": approval_id, "decision": decision},
         )
         return updated or self._state_store.get_run(backend_run_id) or {}
+
+    def create_backend_session(self, *, project_root: str, external_session_id: str) -> dict[str, Any]:
+        return self._headless_server.request(
+            "POST",
+            "/session",
+            params={"directory": project_root},
+            json_payload={"title": f"Adapter session {external_session_id}"},
+            timeout_s=30.0,
+        )
+
+    def fetch_session_diff(self, *, project_root: str, backend_session_id: str) -> dict[str, Any]:
+        response = self._headless_server.request(
+            "GET",
+            f"/session/{backend_session_id}/diff",
+            params={"directory": project_root},
+            timeout_s=30.0,
+        )
+        if isinstance(response, dict):
+            return response
+        if isinstance(response, list):
+            return {"files": response}
+        return {"files": []}
+
+    def compact_session(
+        self,
+        *,
+        project_root: str,
+        backend_session_id: str,
+        provider_id: str | None,
+        model_id: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if provider_id and model_id:
+            payload["model"] = {"providerID": provider_id, "modelID": model_id}
+        response = self._headless_server.request(
+            "POST",
+            f"/session/{backend_session_id}/summarize",
+            params={"directory": project_root},
+            json_payload=payload or None,
+            timeout_s=300.0,
+        )
+        return response if isinstance(response, dict) else {}
 
     def _run_process(self, run: dict[str, Any]) -> None:
         if self._settings.runner_type == "raw_json_runner":
@@ -225,12 +275,9 @@ class OpenCodeProcessSupervisor:
         existing = str(run.get("backend_session_id") or "").strip()
         if existing:
             return existing
-        payload = self._headless_server.request(
-            "POST",
-            "/session",
-            params={"directory": str(run["project_root"])},
-            json_payload={"title": f"Adapter run {run['external_run_id']}"},
-            timeout_s=30.0,
+        payload = self.create_backend_session(
+            project_root=str(run["project_root"]),
+            external_session_id=str(run.get("external_session_id") or run["external_run_id"]),
         )
         session_id = str(payload.get("id") or "").strip()
         if not session_id:
@@ -258,6 +305,13 @@ class OpenCodeProcessSupervisor:
         model = self._parse_model(model_override)
         if model is not None:
             payload["model"] = model
+            external_session_id = str(run.get("external_session_id") or "").strip()
+            if external_session_id:
+                self._state_store.upsert_session_mapping(
+                    external_session_id,
+                    last_provider_id=str(model.get("providerID") or "").strip() or None,
+                    last_model_id=str(model.get("modelID") or "").strip() or None,
+                )
         return payload
 
     def _consume_server_events(
@@ -334,19 +388,36 @@ class OpenCodeProcessSupervisor:
                 patches["current_action"] = "Assistant updated"
         elif event_type == "permission.asked":
             approval = _approval_from_permission(payload.get("properties") or {})
-            patches["pending_approvals"] = [approval]
+            self._state_store.record_pending_approvals(backend_run_id, [approval])
+            patches["pending_approvals"] = self._state_store.list_pending_approvals(backend_run_id)
             patches["current_action"] = "Awaiting approval"
             canonical_event = "run.awaiting_approval"
         elif event_type == "permission.replied":
-            patches["pending_approvals"] = []
+            properties = payload.get("properties") or {}
+            approval_id = str(properties.get("id") or "").strip()
+            response = str(properties.get("response") or "").strip().lower()
+            if approval_id:
+                decision = "approve" if response in {"approve", "approved", "once", "always"} else "deny"
+                self._state_store.resolve_approval(backend_run_id, approval_id, decision)
+            patches["pending_approvals"] = self._state_store.list_pending_approvals(backend_run_id)
             patches["current_action"] = "Approval replied"
             canonical_event = "approval.decision"
         elif event_type == "session.diff":
             diff = (payload.get("properties") or {}).get("diff") or []
+            normalized_files = _normalize_session_diff(diff)
+            external_session_id = str(current.get("external_session_id") or "").strip()
+            if external_session_id:
+                self._state_store.set_session_diff(
+                    external_session_id=external_session_id,
+                    backend_session_id=session_id,
+                    summary=_session_diff_summary(normalized_files),
+                    files=normalized_files,
+                    stale=False,
+                )
             artifact = self._materialize_inline_artifact(
                 artifacts_dir,
                 "session-diff.json",
-                json.dumps(diff, ensure_ascii=False, indent=2),
+                json.dumps(normalized_files, ensure_ascii=False, indent=2),
                 "application/json",
             )
             artifacts = list(current.get("artifacts") or [])
@@ -467,7 +538,12 @@ class OpenCodeProcessSupervisor:
             process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
             process.stdin.flush()
         current = self._state_store.get_run(backend_run_id) or {}
-        remaining = [item for item in current.get("pending_approvals") or [] if str(item.get("approval_id") or item.get("approvalId") or "") != approval_id]
+        self._state_store.resolve_approval(backend_run_id, approval_id, decision)
+        remaining = [
+            item
+            for item in current.get("pending_approvals") or []
+            if str(item.get("approval_id") or item.get("approvalId") or "") != approval_id
+        ]
         updated = self._state_store.patch_run(
             backend_run_id,
             pending_approvals=remaining,
@@ -650,12 +726,13 @@ class OpenCodeProcessSupervisor:
 
         approvals = _extract_approvals(payload)
         if approvals:
+            self._state_store.record_pending_approvals(backend_run_id, approvals)
             patches["pending_approvals"] = approvals
             patches["status"] = "running"
             event_type = "run.awaiting_approval"
         elif event_type != "run.awaiting_approval":
             patches["pending_approvals"] = []
-            if status != "queued":
+            if status != "queued" and event_type not in {"run.finished", "run.failed", "run.cancelled"}:
                 patches["status"] = status
 
         result = payload.get("result") or payload.get("output")
@@ -663,6 +740,18 @@ class OpenCodeProcessSupervisor:
             patches["result"] = result
             patches["output"] = result
             result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        if "diff" in payload:
+            normalized_files = _normalize_session_diff(payload.get("diff"))
+            external_session_id = str(run.get("external_session_id") or "").strip()
+            if external_session_id:
+                self._state_store.set_session_diff(
+                    external_session_id=external_session_id,
+                    backend_session_id=backend_session_id,
+                    summary=_session_diff_summary(normalized_files),
+                    files=normalized_files,
+                    stale=False,
+                )
 
         artifacts = list((self._state_store.get_run(backend_run_id) or {}).get("artifacts") or [])
         for item in _extract_artifacts(payload):
@@ -683,10 +772,10 @@ class OpenCodeProcessSupervisor:
         events_handle.flush()
 
         if event_type in {"run.finished", "run.failed", "run.cancelled"}:
-            terminal_status = "succeeded" if event_type == "run.finished" else ("failed" if event_type == "run.failed" else "cancelled")
+            # Terminal raw events can arrive before stderr/result artifacts are fully flushed.
+            # Final status transition is owned by _finalize_raw_run after process teardown.
             self._state_store.patch_run(
                 backend_run_id,
-                status=terminal_status,
                 finished_at=utcnow().isoformat(),
             )
 
@@ -881,6 +970,33 @@ def _approval_from_permission(properties: dict[str, Any]) -> dict[str, Any]:
         "riskLevel": "high",
         "risk_level": "high",
         "metadata": dict(properties.get("metadata") or {}),
+    }
+
+
+def _normalize_session_diff(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "file": str(item.get("file") or item.get("path") or item.get("name") or ""),
+                "additions": int(item.get("additions", 0)),
+                "deletions": int(item.get("deletions", 0)),
+                "before": str(item.get("before") or ""),
+                "after": str(item.get("after") or ""),
+            }
+        )
+    return normalized
+
+
+def _session_diff_summary(files: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "files": len(files),
+        "additions": sum(int(item.get("additions", 0)) for item in files),
+        "deletions": sum(int(item.get("deletions", 0)) for item in files),
     }
 
 

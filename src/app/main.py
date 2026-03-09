@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -115,6 +116,7 @@ async def _startup_app(app: FastAPI) -> None:
             artifact_store=artifact_store,
             poll_interval_ms=settings.opencode_poll_interval_ms,
             max_poll_interval_ms=settings.opencode_max_poll_interval_ms,
+            event_page_size=settings.opencode_event_page_size,
         )
         opencode_runtime = OpenCodeSessionRuntime(
             state_store=chat_state_store,
@@ -225,6 +227,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _request_id_middleware(request: Request, call_next):
+    request_id = str(request.headers.get("X-Request-Id") or "").strip() or uuid.uuid4().hex
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(
     request: Request, exc: RequestValidationError
@@ -244,6 +255,16 @@ async def _validation_exception_handler(
         body_preview,
     )
     return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict) and "error" in detail:
+        response = JSONResponse(status_code=exc.status_code, content=detail)
+        response.headers["X-Request-Id"] = getattr(request.state, "request_id", "")
+        return response
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
 
 @app.get("/health", summary="Проверка доступности сервиса")

@@ -310,14 +310,10 @@ class HttpBackendClient(
                         "Received non-2xx from $url: status=${httpResponse.code}, headers=${httpResponse.headers}, body=\"$responseBody\""
                     )
                 }
-                val message = when (httpResponse.code) {
-                    422 -> {
-                        if (logger.isDebugEnabled) {
-                            logger.debug("Received 422 from $url for payload: $body")
-                        }
-                        parseValidationError(responseBody)
+                val message = parseBackendError(responseBody, httpResponse.code).also {
+                    if (httpResponse.code == 422 && logger.isDebugEnabled) {
+                        logger.debug("Received 422 from $url for payload: $body")
                     }
-                    else -> responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
                 }
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
@@ -357,7 +353,7 @@ class HttpBackendClient(
         response.use { httpResponse ->
             val responseBody = httpResponse.body?.string().orEmpty()
             if (!httpResponse.isSuccessful) {
-                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                val message = parseBackendError(responseBody, httpResponse.code)
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
             return try {
@@ -391,7 +387,7 @@ class HttpBackendClient(
         response.use { httpResponse ->
             val responseBody = httpResponse.body?.string().orEmpty()
             if (!httpResponse.isSuccessful) {
-                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                val message = parseBackendError(responseBody, httpResponse.code)
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
             return try {
@@ -433,7 +429,7 @@ class HttpBackendClient(
                         "Received non-2xx from $url: status=${httpResponse.code}, headers=${httpResponse.headers}, body=\"$responseBody\""
                     )
                 }
-                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                val message = parseBackendError(responseBody, httpResponse.code)
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
 
@@ -501,10 +497,31 @@ class HttpBackendClient(
         response.use { httpResponse ->
             val responseBody = httpResponse.body?.string().orEmpty()
             if (!httpResponse.isSuccessful) {
-                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                val message = parseBackendError(responseBody, httpResponse.code)
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
             return responseBody
+        }
+    }
+
+    private fun parseBackendError(body: String, statusCode: Int): String {
+        if (body.isBlank()) return "HTTP $statusCode"
+
+        return try {
+            val root = mapper.readValue<JsonNode>(body)
+            root.get("error")?.get("message")?.takeIf { it.isTextual }?.asText()
+                ?: if (statusCode == 422) parseValidationError(body) else {
+                    val detail = root.get("detail")
+                    when {
+                        detail == null -> body
+                        detail.isTextual -> detail.asText()
+                        detail.isObject -> detail.get("error")?.get("message")?.takeIf { it.isTextual }?.asText()
+                            ?: detail.toString()
+                        else -> detail.toString()
+                    }
+                }
+        } catch (_: Exception) {
+            body
         }
     }
 

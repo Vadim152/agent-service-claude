@@ -1,6 +1,5 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from pathlib import Path
 from zipfile import ZipFile
 
 from agents.repo_scanner_agent import RepoScannerAgent
@@ -44,15 +43,16 @@ def test_scan_repository_collects_steps_from_project_and_dependency_roots(tmp_pa
     dep_root.mkdir()
 
     (project_root / "LocalSteps.kt").write_text(_step_source("open local app"), encoding="utf-8")
-    (dep_root / "DependencySteps.kt").write_text(_step_source("open dependency app"), encoding="utf-8")
+    (project_root / "LocalBindings.kt").write_text(_step_source("skip local binding"), encoding="utf-8")
+    (dep_root / "FrameworkBindings.kt").write_text(_step_source("open dependency app"), encoding="utf-8")
 
     jar_path = tmp_path / "dep-sources.jar"
     with ZipFile(jar_path, "w") as archive:
-        archive.writestr("com/example/JarSteps.kt", _step_source("open jar app"))
+        archive.writestr("com/example/FrameworkBindings.kt", _step_source("open jar app"))
 
     step_store = _StepIndexStoreStub()
     embeddings_store = _EmbeddingsStoreStub()
-    scanner = RepoScannerAgent(step_store, embeddings_store, file_patterns=["**/*.kt"])
+    scanner = RepoScannerAgent(step_store, embeddings_store)
 
     result = scanner.scan_repository(
         str(project_root),
@@ -63,6 +63,7 @@ def test_scan_repository_collects_steps_from_project_and_dependency_roots(tmp_pa
     assert "open local app" in patterns
     assert "open dependency app" in patterns
     assert "open jar app" in patterns
+    assert "skip local binding" not in patterns
 
     assert result["stepsCount"] == len(step_store.saved_steps)
     assert embeddings_store.indexed_project_root == str(project_root)
@@ -72,5 +73,30 @@ def test_scan_repository_collects_steps_from_project_and_dependency_roots(tmp_pa
 
     assert local_steps and all(not step.id.startswith("dep[") for step in local_steps)
     assert dependency_steps and all(step.id.startswith("dep[") for step in dependency_steps)
-    assert any("dep-sources.jar!/com/example/JarSteps.kt" in (step.implementation.file or "") for step in dependency_steps)
+    assert any(
+        "dep-sources.jar!/com/example/FrameworkBindings.kt" in (step.implementation.file or "")
+        for step in dependency_steps
+    )
 
+
+def test_scan_repository_ignores_binary_only_jars(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "LocalSteps.kt").write_text(_step_source("open local app"), encoding="utf-8")
+
+    binary_jar = tmp_path / "dep-binary.jar"
+    with ZipFile(binary_jar, "w") as archive:
+        archive.writestr("com/example/BinarySteps.class", b"\xca\xfe\xba\xbe")
+
+    step_store = _StepIndexStoreStub()
+    embeddings_store = _EmbeddingsStoreStub()
+    scanner = RepoScannerAgent(step_store, embeddings_store)
+
+    result = scanner.scan_repository(
+        str(project_root),
+        additional_roots=[str(binary_jar)],
+    )
+
+    patterns = [step.pattern for step in step_store.saved_steps]
+    assert patterns == ["open local app"]
+    assert result["stepsCount"] == 1

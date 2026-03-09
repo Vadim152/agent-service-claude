@@ -10,6 +10,7 @@ from threading import RLock
 from typing import Any
 
 from infrastructure.runtime_errors import ChatRuntimeError
+from runtime.opencode_adapter import OpenCodeAdapterError
 
 
 def _utcnow() -> str:
@@ -30,6 +31,7 @@ class OpenCodeRunDriver:
         artifact_store: Any | None = None,
         poll_interval_ms: int = 1_000,
         max_poll_interval_ms: int = 5_000,
+        event_page_size: int = 200,
     ) -> None:
         self._adapter_client = adapter_client
         self._run_state_store = run_state_store
@@ -38,6 +40,7 @@ class OpenCodeRunDriver:
         self._artifact_store = artifact_store
         self._poll_interval_s = max(0.1, poll_interval_ms / 1000.0)
         self._max_poll_interval_s = max(self._poll_interval_s, max_poll_interval_ms / 1000.0)
+        self._event_page_size = max(1, int(event_page_size))
 
     async def execute_run(self, run_id: str) -> None:
         run = self._require_run(run_id)
@@ -87,6 +90,7 @@ class OpenCodeRunDriver:
             await self._sync_events(run_id)
             current = self._require_run(run_id)
             if str(current.get("status") or "queued") in TERMINAL_RUN_STATUSES:
+                await self._sync_session_diff_snapshot(session_id=session_id)
                 self._finalize_session(current, status_payload)
                 return
             await asyncio.sleep(min(self._poll_interval_s, self._max_poll_interval_s))
@@ -168,27 +172,56 @@ class OpenCodeRunDriver:
         if not backend_run_id:
             return
         cursor = run.get("sync_cursor", 0)
-        payload = await asyncio.to_thread(self._adapter_client.list_events, backend_run_id, after=cursor)
-        items = payload.get("items", [])
-        if not isinstance(items, list):
-            items = []
-        next_cursor = payload.get("nextCursor", payload.get("nextIndex", cursor))
         session_id = str(run.get("session_id") or "").strip() or None
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            event_type = str(item.get("eventType") or item.get("type") or "run.progress")
-            event_payload = dict(item.get("payload") or {})
-            event_payload.setdefault("runId", run_id)
-            event_payload.setdefault("backendRunId", backend_run_id)
-            self._run_state_store.append_event(run_id, event_type, event_payload)
-            if session_id:
-                self._session_state_store.append_event(
-                    session_id,
-                    f"opencode.{event_type}",
-                    {"sessionId": session_id, **event_payload},
+        has_more = True
+        next_cursor = cursor
+        while has_more:
+            try:
+                payload = await asyncio.to_thread(
+                    self._adapter_client.list_events,
+                    backend_run_id,
+                    after=next_cursor,
+                    limit=self._event_page_size,
                 )
+            except OpenCodeAdapterError as exc:
+                if exc.code == "stale_cursor":
+                    next_cursor = int((exc.details or {}).get("nextCursor") or next_cursor)
+                    self._run_state_store.patch_job(run_id, sync_cursor=next_cursor, last_synced_at=_utcnow())
+                    return
+                raise
+            items = payload.get("items", [])
+            if not isinstance(items, list):
+                items = []
+            next_cursor = payload.get("nextCursor", payload.get("nextIndex", next_cursor))
+            has_more = bool(payload.get("hasMore", False))
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                event_type = str(item.get("eventType") or item.get("type") or "run.progress")
+                event_payload = dict(item.get("payload") or {})
+                event_payload.setdefault("runId", run_id)
+                event_payload.setdefault("backendRunId", backend_run_id)
+                self._run_state_store.append_event(run_id, event_type, event_payload)
+                if session_id:
+                    self._session_state_store.append_event(
+                        session_id,
+                        f"opencode.{event_type}",
+                        {"sessionId": session_id, **event_payload},
+                    )
+            if not items:
+                break
         self._run_state_store.patch_job(run_id, sync_cursor=next_cursor, last_synced_at=_utcnow())
+
+    async def _sync_session_diff_snapshot(self, *, session_id: str | None) -> None:
+        if not session_id:
+            return
+        try:
+            payload = await asyncio.to_thread(self._adapter_client.get_session_diff, session_id)
+        except Exception:
+            return
+        summary = dict(payload.get("summary") or {"files": 0, "additions": 0, "deletions": 0})
+        files = list(payload.get("files") or [])
+        self._session_state_store.update_session(session_id, diff={"summary": summary, "files": files})
 
     def _merge_attempt_artifacts(self, run: dict[str, Any], status_payload: dict[str, Any]) -> list[dict[str, Any]]:
         attempts = [dict(item) for item in (run.get("attempts") or []) if isinstance(item, dict)]
@@ -495,6 +528,17 @@ def _first_float(payload: dict[str, Any], *keys: str, default: float | None) -> 
     return default
 
 
+def _adapter_error_to_runtime_error(exc: OpenCodeAdapterError) -> ChatRuntimeError:
+    return ChatRuntimeError(
+        str(exc),
+        status_code=exc.status_code or 503,
+        code=exc.code,
+        retryable=exc.retryable,
+        details=exc.details,
+        request_id=exc.request_id,
+    )
+
+
 class OpenCodeSessionRuntime:
     name = "opencode"
 
@@ -551,6 +595,28 @@ class OpenCodeSessionRuntime:
             active_run_id=None,
             active_run_status=None,
             active_run_backend="opencode-adapter",
+        )
+        try:
+            adapter_session = await asyncio.to_thread(
+                self._adapter_client.ensure_session,
+                {
+                    "externalSessionId": payload["session_id"],
+                    "projectRoot": normalized_project_root,
+                    "source": source,
+                    "profile": profile,
+                },
+            )
+        except OpenCodeAdapterError as exc:
+            self.state_store.update_session(
+                payload["session_id"],
+                activity="error",
+                current_action=str(exc),
+            )
+            raise _adapter_error_to_runtime_error(exc) from exc
+        self.state_store.update_session(
+            payload["session_id"],
+            backend_session_id=adapter_session.get("backendSessionId"),
+            current_action=str(adapter_session.get("currentAction") or "Idle"),
         )
         session = self._require_session(payload["session_id"])
         return {
@@ -646,6 +712,8 @@ class OpenCodeSessionRuntime:
 
     async def get_status(self, *, session_id: str) -> dict[str, Any]:
         session = self._require_session(session_id)
+        await self._refresh_session_mapping(session_id=session_id, current_session=session)
+        session = self._require_session(session_id)
         events = session.get("events", [])
         last_event = events[-1]["created_at"] if events else session.get("updated_at", _utcnow())
         return {
@@ -668,8 +736,27 @@ class OpenCodeSessionRuntime:
 
     async def get_diff(self, *, session_id: str) -> dict[str, Any]:
         session = self._require_session(session_id)
-        diff = session.get("diff") or {"summary": {"files": 0, "additions": 0, "deletions": 0}, "files": []}
-        return {"sessionId": session["session_id"], "runtime": session.get("runtime", self.name), "summary": diff.get("summary", {"files": 0, "additions": 0, "deletions": 0}), "files": diff.get("files", []), "updatedAt": session.get("updated_at", _utcnow())}
+        try:
+            payload = await asyncio.to_thread(self._adapter_client.get_session_diff, session_id)
+        except OpenCodeAdapterError as exc:
+            raise _adapter_error_to_runtime_error(exc) from exc
+        diff = {
+            "summary": dict(payload.get("summary") or {"files": 0, "additions": 0, "deletions": 0}),
+            "files": list(payload.get("files") or []),
+        }
+        self.state_store.update_session(
+            session_id,
+            backend_session_id=payload.get("backendSessionId") or session.get("backend_session_id"),
+            diff=diff,
+        )
+        updated = self._require_session(session_id)
+        return {
+            "sessionId": updated["session_id"],
+            "runtime": updated.get("runtime", self.name),
+            "summary": diff.get("summary", {"files": 0, "additions": 0, "deletions": 0}),
+            "files": diff.get("files", []),
+            "updatedAt": payload.get("updatedAt") or updated.get("updated_at", _utcnow()),
+        }
 
     async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
         session = self._require_session(session_id)
@@ -678,14 +765,43 @@ class OpenCodeSessionRuntime:
             if not active_run_id or self._run_service is None:
                 raise ChatRuntimeError("No active OpenCode run to cancel", status_code=409)
             result = {"ok": True, "cancel": self._run_service.cancel_run(active_run_id)}
-        elif command == "status":
-            result = {"ok": True, "status": await self.get_status(session_id=session_id)}
-        elif command == "diff":
-            result = {"ok": True, "diff": await self.get_diff(session_id=session_id)}
-        elif command == "help":
-            result = {"ok": True, "commands": ["status", "diff", "abort", "help"]}
         elif command == "compact":
-            result = {"ok": False, "message": "compact is not supported for OpenCode sessions"}
+            self.state_store.append_event(session_id, "opencode.compact.started", {"sessionId": session_id})
+            try:
+                adapter_result = await asyncio.to_thread(self._adapter_client.compact_session, session_id)
+            except OpenCodeAdapterError as exc:
+                self.state_store.append_event(
+                    session_id,
+                    "opencode.compact.failed",
+                    {"sessionId": session_id, "message": str(exc)},
+                )
+                raise _adapter_error_to_runtime_error(exc) from exc
+            self.state_store.append_event(
+                session_id,
+                "opencode.compact.succeeded",
+                {"sessionId": session_id, "result": adapter_result.get("result") or {}},
+            )
+            result = dict(adapter_result.get("result") or {})
+        elif command in {"status", "diff", "help"}:
+            try:
+                adapter_result = await asyncio.to_thread(self._adapter_client.execute_session_command, session_id, command)
+            except OpenCodeAdapterError as exc:
+                raise _adapter_error_to_runtime_error(exc) from exc
+            result = dict(adapter_result.get("result") or {})
+            if command == "status":
+                status_payload = dict(result.get("status") or {})
+                if status_payload:
+                    self._apply_session_mapping_status(session_id=session_id, payload=status_payload)
+            elif command == "diff":
+                diff_payload = dict(result.get("diff") or {})
+                if diff_payload:
+                    self.state_store.update_session(
+                        session_id,
+                        diff={
+                            "summary": dict(diff_payload.get("summary") or {}),
+                            "files": list(diff_payload.get("files") or []),
+                        },
+                    )
         else:
             raise ChatRuntimeError(f"Unsupported command: {command}", status_code=422)
         self.state_store.append_event(session_id, "command.executed", {"sessionId": session_id, "command": command})
@@ -701,7 +817,10 @@ class OpenCodeSessionRuntime:
         if not backend_run_id:
             raise ChatRuntimeError("OpenCode approval is missing backend run id", status_code=422)
         public_decision = "approve" if decision in {"approve_once", "approve_always"} else "deny"
-        await asyncio.to_thread(self._adapter_client.submit_approval_decision, backend_run_id, permission_id, public_decision)
+        try:
+            await asyncio.to_thread(self._adapter_client.submit_approval_decision, backend_run_id, permission_id, public_decision)
+        except OpenCodeAdapterError as exc:
+            raise _adapter_error_to_runtime_error(exc) from exc
         self.state_store.pop_pending_tool_call(session_id, permission_id)
         self.state_store.append_event(session_id, "permission.approved" if public_decision == "approve" else "permission.rejected", {"sessionId": session_id, "permissionId": permission_id})
         session = self._require_session(session_id)
@@ -729,6 +848,32 @@ class OpenCodeSessionRuntime:
                     last_emit_ts = now
             index = next_index
             await asyncio.sleep(0.15)
+
+    async def _refresh_session_mapping(self, *, session_id: str, current_session: dict[str, Any]) -> None:
+        active_run_status = str(current_session.get("active_run_status") or "").strip().lower()
+        if active_run_status and active_run_status not in {"succeeded", "failed", "cancelled"}:
+            return
+        try:
+            payload = await asyncio.to_thread(self._adapter_client.get_session, session_id)
+        except OpenCodeAdapterError:
+            return
+        self._apply_session_mapping_status(session_id=session_id, payload=payload)
+
+    def _apply_session_mapping_status(self, *, session_id: str, payload: dict[str, Any]) -> None:
+        status_value = str(payload.get("status") or "").strip().lower()
+        activity = "idle"
+        if status_value in {"queued", "running", "busy"}:
+            activity = "busy"
+        elif status_value in {"failed", "error"}:
+            activity = "error"
+        if self.state_store.list_pending_tool_calls(session_id=session_id):
+            activity = "waiting_permission"
+        self.state_store.update_session(
+            session_id,
+            backend_session_id=payload.get("backendSessionId") or payload.get("backend_session_id"),
+            current_action=str(payload.get("currentAction") or payload.get("current_action") or "Idle"),
+            activity=activity,
+        )
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         with self._locks_guard:

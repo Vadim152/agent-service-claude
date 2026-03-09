@@ -1,4 +1,4 @@
-﻿"""Agent for repository scan and step index updates."""
+"""Agent for repository scan and step index updates."""
 from __future__ import annotations
 
 import hashlib
@@ -23,6 +23,28 @@ from tools.step_extractor import StepExtractor
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PROJECT_FILE_PATTERNS = [
+    "**/*Steps.java",
+    "**/*Steps.kt",
+    "**/*Steps.groovy",
+    "**/*Steps.py",
+    "**/*StepDefinitions.java",
+    "**/*StepDefinitions.kt",
+    "**/*StepDefinitions.groovy",
+    "**/*StepDefinitions.py",
+    "**/*StepDefinition.java",
+    "**/*StepDefinition.kt",
+    "**/*StepDefinition.groovy",
+    "**/*StepDefinition.py",
+]
+
+DEFAULT_EXTERNAL_FILE_PATTERNS = [
+    "**/*.java",
+    "**/*.kt",
+    "**/*.groovy",
+    "**/*.py",
+]
+
 
 class RepoScannerAgent:
     """Encapsulates source scan and step index refresh."""
@@ -34,26 +56,15 @@ class RepoScannerAgent:
         scenario_index_store: ScenarioIndexStore | None = None,
         llm_client: LLMClient | None = None,
         file_patterns: list[str] | None = None,
+        external_file_patterns: list[str] | None = None,
         feature_patterns: list[str] | None = None,
     ) -> None:
         self.step_index_store = step_index_store
         self.embeddings_store = embeddings_store
         self.scenario_index_store = scenario_index_store
         self.llm_client = llm_client
-        self.file_patterns = file_patterns or [
-            "**/*Steps.java",
-            "**/*Steps.kt",
-            "**/*Steps.groovy",
-            "**/*Steps.py",
-            "**/*StepDefinitions.java",
-            "**/*StepDefinitions.kt",
-            "**/*StepDefinitions.groovy",
-            "**/*StepDefinitions.py",
-            "**/*StepDefinition.java",
-            "**/*StepDefinition.kt",
-            "**/*StepDefinition.groovy",
-            "**/*StepDefinition.py",
-        ]
+        self.file_patterns = file_patterns or list(DEFAULT_PROJECT_FILE_PATTERNS)
+        self.external_file_patterns = external_file_patterns or list(DEFAULT_EXTERNAL_FILE_PATTERNS)
         self.feature_patterns = feature_patterns or ["**/*.feature"]
 
     def scan_repository(
@@ -112,31 +123,38 @@ class RepoScannerAgent:
         root_path = Path(root).expanduser().resolve()
         project_path = Path(project_root).expanduser().resolve()
         is_primary_root = root_path == project_path
+        file_patterns = self.file_patterns if is_primary_root else self.external_file_patterns
 
         if root_path.is_dir():
-            extractor = StepExtractor(FsRepository(str(root_path)), self.file_patterns)
+            extractor = StepExtractor(FsRepository(str(root_path)), file_patterns)
             steps = extractor.extract_steps()
             if not is_primary_root:
                 self._prefix_external_steps(steps, str(root_path))
             return steps
 
         if root_path.is_file() and root_path.suffix.lower() == ".jar":
-            steps = self._extract_steps_from_archive(root_path)
+            steps = self._extract_steps_from_archive(root_path, file_patterns)
             self._prefix_external_steps(steps, str(root_path))
             return steps
 
         logger.debug("[RepoScannerAgent] Skip unsupported scan root: %s", root)
         return []
 
-    def _extract_steps_from_archive(self, archive_path: Path) -> list[StepDefinition]:
+    def _extract_steps_from_archive(
+        self,
+        archive_path: Path,
+        file_patterns: list[str],
+    ) -> list[StepDefinition]:
         steps: list[StepDefinition] = []
+        saw_supported_source_file = False
         with ZipFile(archive_path) as archive:
             for entry in archive.infolist():
                 if entry.is_dir():
                     continue
                 relative_path = entry.filename
-                if not self._matches_pattern(relative_path):
+                if not self._matches_pattern(relative_path, file_patterns):
                     continue
+                saw_supported_source_file = True
 
                 try:
                     content = archive.read(entry).decode("utf-8", errors="replace")
@@ -180,6 +198,11 @@ class RepoScannerAgent:
                             ),
                         )
                     )
+        if not saw_supported_source_file:
+            logger.info(
+                "[RepoScannerAgent] Skip archive without attached sources: %s",
+                archive_path,
+            )
         return steps
 
     def _extract_scenarios(self, project_root: str) -> list[ScenarioCatalogEntry]:
@@ -187,10 +210,10 @@ class RepoScannerAgent:
         fs_repo = FsRepository(str(project_path))
         return extract_scenarios(fs_repo, self.feature_patterns)
 
-    def _matches_pattern(self, relative_path: str) -> bool:
+    def _matches_pattern(self, relative_path: str, file_patterns: list[str]) -> bool:
         normalized = relative_path.replace("\\", "/")
         pure = PurePosixPath(normalized)
-        return any(pure.match(pattern) for pattern in self.file_patterns)
+        return any(pure.match(pattern) for pattern in file_patterns)
 
     @staticmethod
     def _prefix_external_steps(steps: list[StepDefinition], source_root: str) -> None:
@@ -401,4 +424,3 @@ class RepoScannerAgent:
 
 
 __all__ = ["RepoScannerAgent"]
-

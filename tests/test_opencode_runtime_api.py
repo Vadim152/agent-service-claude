@@ -14,6 +14,7 @@ from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
 from infrastructure.run_state_store import RunStateStore
 from policy import InMemoryPolicyStore, PolicyService
+from runtime.opencode_adapter import OpenCodeAdapterError
 from runtime.opencode_runtime import OpenCodeRunDriver, OpenCodeSessionRuntime
 from runtime.run_service import RunService
 from runtime.session_runtime import SessionRuntimeRegistry
@@ -31,13 +32,87 @@ def _wait_until(assertion, timeout_s: float = 5.0) -> None:
 class _FakeOpenCodeAdapter:
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, object]] = {}
+        self.sessions: dict[str, dict[str, object]] = {}
+
+    def ensure_session(self, payload: dict[str, object]) -> dict[str, object]:
+        external_session_id = str(payload.get("externalSessionId") or "")
+        project_root = str(payload.get("projectRoot") or "")
+        existing = self.sessions.get(external_session_id)
+        if existing is None:
+            existing = {
+                "externalSessionId": external_session_id,
+                "backendSessionId": f"session-{len(self.sessions) + 1}",
+                "projectRoot": project_root,
+                "lastBackendRunId": None,
+                "status": "idle",
+                "currentAction": "Idle",
+                "updatedAt": "2026-03-09T00:00:00+00:00",
+            }
+            self.sessions[external_session_id] = existing
+        return dict(existing)
+
+    def get_session(self, external_session_id: str) -> dict[str, object]:
+        return dict(self.sessions[external_session_id])
+
+    def compact_session(self, external_session_id: str) -> dict[str, object]:
+        session = self.sessions[external_session_id]
+        session["currentAction"] = "Idle"
+        return {
+            "externalSessionId": external_session_id,
+            "command": "compact",
+            "accepted": True,
+            "result": {"status": "completed", "backendSessionId": session["backendSessionId"]},
+            "updatedAt": "2026-03-09T00:00:01+00:00",
+        }
+
+    def get_session_diff(self, external_session_id: str) -> dict[str, object]:
+        session = self.sessions[external_session_id]
+        return {
+            "externalSessionId": external_session_id,
+            "backendSessionId": session["backendSessionId"],
+            "summary": {"files": 1, "additions": 3, "deletions": 1},
+            "files": [{"file": "src/app/main.py", "additions": 3, "deletions": 1, "before": "", "after": ""}],
+            "stale": False,
+            "updatedAt": "2026-03-09T00:00:02+00:00",
+        }
+
+    def execute_session_command(self, external_session_id: str, command: str) -> dict[str, object]:
+        if command == "status":
+            return {
+                "externalSessionId": external_session_id,
+                "command": command,
+                "accepted": True,
+                "result": {"status": self.get_session(external_session_id)},
+                "updatedAt": "2026-03-09T00:00:03+00:00",
+            }
+        if command == "diff":
+            return {
+                "externalSessionId": external_session_id,
+                "command": command,
+                "accepted": True,
+                "result": {"diff": self.get_session_diff(external_session_id)},
+                "updatedAt": "2026-03-09T00:00:03+00:00",
+            }
+        if command == "help":
+            return {
+                "externalSessionId": external_session_id,
+                "command": command,
+                "accepted": True,
+                "result": {"commands": ["status", "diff", "compact", "abort", "help"]},
+                "updatedAt": "2026-03-09T00:00:03+00:00",
+            }
+        raise AssertionError(f"Unsupported fake session command: {command}")
 
     def create_run(self, payload: dict[str, object]) -> dict[str, object]:
         backend_run_id = f"oc-{len(self.runs) + 1}"
         prompt = str(payload.get("prompt") or "")
         needs_approval = "approval" in prompt.lower()
+        session_id = str(payload.get("sessionId") or "")
+        backend_session_id = str(payload.get("backendSessionId") or self.sessions[session_id]["backendSessionId"])
         self.runs[backend_run_id] = {
             "backendRunId": backend_run_id,
+            "backendSessionId": backend_session_id,
+            "externalSessionId": session_id,
             "status": "running",
             "currentAction": "Executing OpenCode run",
             "prompt": prompt,
@@ -57,8 +132,12 @@ class _FakeOpenCodeAdapter:
                 {"eventType": "run.progress", "payload": {"stage": "created"}},
             ],
         }
+        self.sessions[session_id]["lastBackendRunId"] = backend_run_id
+        self.sessions[session_id]["status"] = "running"
+        self.sessions[session_id]["currentAction"] = "Executing OpenCode run"
         return {
             "backendRunId": backend_run_id,
+            "backendSessionId": backend_session_id,
             "status": "running",
             "currentAction": "Executing OpenCode run",
         }
@@ -72,8 +151,11 @@ class _FakeOpenCodeAdapter:
         }
         usage_limits = {"contextWindow": 200000, "used": 220, "percent": 0.0011}
         if bool(run.get("cancelled")):
+            self.sessions[str(run["externalSessionId"])]["status"] = "idle"
+            self.sessions[str(run["externalSessionId"])]["currentAction"] = "Idle"
             return {
                 "backendRunId": backend_run_id,
+                "backendSessionId": run["backendSessionId"],
                 "status": "cancelled",
                 "currentAction": "Cancelled",
                 "output": {"summary": "OpenCode run was cancelled."},
@@ -82,8 +164,11 @@ class _FakeOpenCodeAdapter:
                 "limits": usage_limits,
             }
         if run.get("pendingApprovals") and not bool(run.get("approved")):
+            self.sessions[str(run["externalSessionId"])]["status"] = "running"
+            self.sessions[str(run["externalSessionId"])]["currentAction"] = "Awaiting approval"
             return {
                 "backendRunId": backend_run_id,
+                "backendSessionId": run["backendSessionId"],
                 "status": "running",
                 "currentAction": "Awaiting approval",
                 "pendingApprovals": list(run.get("pendingApprovals") or []),
@@ -91,8 +176,11 @@ class _FakeOpenCodeAdapter:
                 "limits": usage_limits,
             }
         if int(run.get("polls", 0)) >= 2:
+            self.sessions[str(run["externalSessionId"])]["status"] = "idle"
+            self.sessions[str(run["externalSessionId"])]["currentAction"] = "Idle"
             return {
                 "backendRunId": backend_run_id,
+                "backendSessionId": run["backendSessionId"],
                 "status": "succeeded",
                 "currentAction": "Completed",
                 "output": {"summary": f"OpenCode finished: {run['prompt']}"},
@@ -103,6 +191,7 @@ class _FakeOpenCodeAdapter:
             }
         return {
             "backendRunId": backend_run_id,
+            "backendSessionId": run["backendSessionId"],
             "status": "running",
             "currentAction": "Executing OpenCode run",
             "pendingApprovals": [],
@@ -110,32 +199,40 @@ class _FakeOpenCodeAdapter:
             "limits": usage_limits,
         }
 
-    def list_events(self, backend_run_id: str, *, after: int | str | None) -> dict[str, object]:
+    def list_events(self, backend_run_id: str, *, after: int | str | None, limit: int | None = None) -> dict[str, object]:
         run = self.runs[backend_run_id]
         cursor = int(after or 0)
         items = list(run.get("events") or [])[cursor:]
-        return {"items": items, "nextCursor": cursor + len(items)}
+        if limit is not None:
+            items = items[:limit]
+        return {"items": items, "nextCursor": cursor + len(items), "hasMore": False}
 
     def cancel_run(self, backend_run_id: str) -> dict[str, object]:
         self.runs[backend_run_id]["cancelled"] = True
+        session_id = str(self.runs[backend_run_id]["externalSessionId"])
+        self.sessions[session_id]["status"] = "idle"
+        self.sessions[session_id]["currentAction"] = "Idle"
         return {"backendRunId": backend_run_id, "status": "cancelled"}
 
     def submit_approval_decision(self, backend_run_id: str, approval_id: str, decision: str) -> dict[str, object]:
         run = self.runs[backend_run_id]
         run["approved"] = decision == "approve"
         run["pendingApprovals"] = []
+        session_id = str(run["externalSessionId"])
+        self.sessions[session_id]["status"] = "running"
+        self.sessions[session_id]["currentAction"] = "Executing OpenCode run"
         run.setdefault("events", []).append(
             {"eventType": "approval.decision", "payload": {"approvalId": approval_id, "decision": decision}}
         )
         return {"backendRunId": backend_run_id, "approvalId": approval_id, "decision": decision}
 
 
-def _build_app() -> FastAPI:
+def _build_app(adapter: _FakeOpenCodeAdapter | None = None) -> FastAPI:
     app = FastAPI()
     base = Path(tempfile.mkdtemp(prefix="opencode-runtime-"))
     memory_store = ChatMemoryStore(base)
     run_state_store = RunStateStore()
-    adapter = _FakeOpenCodeAdapter()
+    adapter = adapter or _FakeOpenCodeAdapter()
 
     chat_runtime = ChatAgentRuntime(memory_store=memory_store)
     policy_service = PolicyService(state_store=chat_runtime.state_store, store=InMemoryPolicyStore())
@@ -179,6 +276,7 @@ def _build_app() -> FastAPI:
     app.state.run_state_store = run_state_store
     app.state.run_service = run_service
     app.state.session_runtime_registry = registry
+    app.state.opencode_adapter_client = adapter
     app.include_router(sessions_router)
     app.include_router(policy_router)
     app.include_router(runs_router)
@@ -271,6 +369,90 @@ def test_opencode_approval_flow_uses_policy_endpoint() -> None:
     event_types = [item["eventType"] for item in audit["items"]]
     assert "permission.requested" in event_types
     assert "permission.approved" in event_types
+
+
+def test_opencode_create_session_eagerly_ensures_backend_mapping() -> None:
+    app = _build_app()
+    client = TestClient(app)
+
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    adapter = app.state.opencode_adapter_client
+    assert session_id in adapter.sessions
+    assert adapter.sessions[session_id]["backendSessionId"].startswith("session-")
+
+
+def test_opencode_compact_command_emits_session_events() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(f"/sessions/{session_id}/commands", json={"command": "compact"})
+
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == "completed"
+    history = client.get(f"/sessions/{session_id}/history").json()
+    event_types = [item["eventType"] for item in history["events"]]
+    assert "opencode.compact.started" in event_types
+    assert "opencode.compact.succeeded" in event_types
+
+
+def test_opencode_help_command_includes_full_command_set() -> None:
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(f"/sessions/{session_id}/commands", json={"command": "help"})
+
+    assert response.status_code == 200
+    assert response.json()["result"]["commands"] == ["status", "diff", "compact", "abort", "help"]
+
+
+def test_opencode_structured_adapter_errors_surface_to_session_api() -> None:
+    class _BusyAdapter(_FakeOpenCodeAdapter):
+        def compact_session(self, external_session_id: str) -> dict[str, object]:
+            raise OpenCodeAdapterError(
+                "Session is busy and cannot be compacted.",
+                status_code=409,
+                code="session_busy",
+                retryable=False,
+            )
+
+    client = TestClient(_build_app(adapter=_BusyAdapter()))
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(f"/sessions/{session_id}/commands", json={"command": "compact"})
+
+    assert response.status_code == 409
+    payload = response.json()["detail"]["error"] if "detail" in response.json() else response.json()["error"]
+    assert payload["code"] == "session_busy"
+    assert "cannot be compacted" in payload["message"]
+
+
+def test_opencode_smoke_compact_and_continue_same_backend_session() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"content": "run delegated agent"})
+    assert first.status_code == 200
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activeRunStatus") == "succeeded")
+    first_run_id = client.get(f"/sessions/{session_id}/status").json()["activeRunId"]
+    first_run = client.get(f"/runs/{first_run_id}").json()
+
+    diff = client.get(f"/sessions/{session_id}/diff").json()
+    assert diff["summary"]["files"] == 1
+
+    compact = client.post(f"/sessions/{session_id}/commands", json={"command": "compact"})
+    assert compact.status_code == 200
+    assert compact.json()["result"]["status"] == "completed"
+
+    second = client.post(f"/sessions/{session_id}/messages", json={"content": "run delegated agent again"})
+    assert second.status_code == 200
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activeRunStatus") == "succeeded")
+    second_run_id = client.get(f"/sessions/{session_id}/status").json()["activeRunId"]
+    second_run = client.get(f"/runs/{second_run_id}").json()
+
+    assert second_run["backendSessionId"] == first_run["backendSessionId"]
 
 
 def test_terminal_message_extracts_structured_error_text() -> None:

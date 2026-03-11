@@ -81,6 +81,10 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         if (!dialog.showAndGet()) {
             return
         }
+        if (dialog.generationBlocked()) {
+            notify(project, "Feature generation is blocked by critical ambiguity in the testcase preview", NotificationType.WARNING)
+            return
+        }
 
         val dialogOptions = dialog.selectedOptions()
         stateStorage.saveGenerateOptions(dialogOptions)
@@ -106,6 +110,9 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var featureResult: FeatureResultDto? = null
             private var planId: String? = dialog.planId()
             private var selectedScenarioId: String? = dialog.selectedScenarioId()
+            private var selectedScenarioCandidateId: String? = dialog.selectedScenarioCandidateId()
+            private var acceptedAssumptionIds: List<String> = dialog.acceptedAssumptionIds()
+            private var confirmedClarifications: Map<String, String> = dialog.confirmedClarifications()
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Creating run..."
@@ -113,14 +120,14 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                     RunCreateRequestDto(
                         projectRoot = projectRoot,
                         plugin = "testgen",
-                        input = mapOf(
-                            "testCaseText" to selectedText,
-                            "targetPath" to dialogOptions.targetPath,
-                            "createFile" to false,
-                            "overwriteExisting" to false,
-                            "language" to dialogOptions.language,
-                            "planId" to planId,
-                            "selectedScenarioId" to selectedScenarioId
+                        input = buildRunInputPayload(
+                            selectedText = selectedText,
+                            dialogOptions = dialogOptions,
+                            planId = planId,
+                            selectedScenarioId = selectedScenarioId,
+                            selectedScenarioCandidateId = selectedScenarioCandidateId,
+                            acceptedAssumptionIds = acceptedAssumptionIds,
+                            confirmedClarifications = confirmedClarifications,
                         ),
                         profile = "quick",
                         source = "ide-plugin"
@@ -158,6 +165,9 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                         overwriteExisting = dialogOptions.overwriteExisting,
                         planId = planId ?: featureResult?.planId,
                         selectedScenarioId = selectedScenarioId ?: featureResult?.selectedScenarioId,
+                        selectedScenarioCandidateId = selectedScenarioCandidateId ?: featureResult?.selectedScenarioCandidateId,
+                        acceptedAssumptionIds = acceptedAssumptionIds,
+                        confirmedClarifications = confirmedClarifications,
                         originalFeatureText = featureText
                     )
                 )
@@ -295,6 +305,27 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         panel?.showUnmappedSteps(unmappedSteps)
     }
 }
+
+internal fun buildRunInputPayload(
+    selectedText: String,
+    dialogOptions: ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialogOptions,
+    planId: String?,
+    selectedScenarioId: String?,
+    selectedScenarioCandidateId: String?,
+    acceptedAssumptionIds: List<String>,
+    confirmedClarifications: Map<String, String>,
+): Map<String, Any?> = mapOf(
+    "testCaseText" to selectedText,
+    "targetPath" to dialogOptions.targetPath,
+    "createFile" to false,
+    "overwriteExisting" to false,
+    "language" to dialogOptions.language,
+    "planId" to planId,
+    "selectedScenarioId" to selectedScenarioId,
+    "selectedScenarioCandidateId" to selectedScenarioCandidateId,
+    "acceptedAssumptionIds" to acceptedAssumptionIds,
+    "clarifications" to confirmedClarifications,
+)
 
 internal fun buildMemorySummaryFromPipeline(result: FeatureResultDto): String? {
     val stage = result.pipeline.firstOrNull { it["stage"]?.toString() == "memory_rules" } ?: return null

@@ -56,6 +56,39 @@ def test_create_run_initializes_result_and_attempts() -> None:
     assert item["attempts"] == []
 
 
+def test_create_run_persists_intent_aware_generation_fields() -> None:
+    app, store = _build_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/runs",
+        json={
+            "projectRoot": "/tmp/project",
+            "plugin": "testgen",
+            "input": {
+                "testCaseText": "Given something",
+                "planId": "plan-42",
+                "selectedScenarioId": "sc-1",
+                "selectedScenarioCandidateId": "candidate-1-happy_path",
+                "acceptedAssumptionIds": ["assumption-data"],
+                "clarifications": {"actor": "user"},
+            },
+            "source": "test-suite",
+            "profile": "quick",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    item = store.get_job(payload["runId"])
+    assert item is not None
+    assert item["plan_id"] == "plan-42"
+    assert item["selected_scenario_id"] == "sc-1"
+    assert item["selected_scenario_candidate_id"] == "candidate-1-happy_path"
+    assert item["accepted_assumption_ids"] == ["assumption-data"]
+    assert item["clarifications"] == {"actor": "user"}
+
+
 def test_get_run_attempts_returns_attempt_payload() -> None:
     app, store = _build_app()
     client = TestClient(app)

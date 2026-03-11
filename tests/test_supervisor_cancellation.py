@@ -80,6 +80,23 @@ class _QualityFailingOrchestrator:
         }
 
 
+class _BlockedGenerationOrchestrator:
+    def generate_feature(self, *args, **kwargs):
+        _ = (args, kwargs)
+        return {
+            "feature": {
+                "featureText": "",
+                "unmappedSteps": [],
+                "meta": {
+                    "generationBlocked": True,
+                    "blockingReason": "Actor and observable outcome must be clarified",
+                },
+            },
+            "matchResult": {"matched": [], "unmatched": []},
+            "pipeline": [{"stage": "clarification_gate", "status": "blocked", "details": {}}],
+        }
+
+
 def test_supervisor_respects_cancel_requested_after_attempt(tmp_path: Path) -> None:
     store = RunStateStore()
     run_id = "job-cancel-mid-flight"
@@ -248,3 +265,45 @@ def test_supervisor_marks_run_needs_attention_when_quality_gate_fails(tmp_path: 
     assert attempts
     assert str(attempts[0]["artifacts"]["featureResult"]).startswith("artifact://")
     assert str(attempts[0]["artifacts"]["failureClassification"]).startswith("artifact://")
+
+
+def test_supervisor_marks_run_needs_attention_when_generation_is_blocked(tmp_path: Path) -> None:
+    store = RunStateStore()
+    run_id = "job-generation-blocked"
+    store.put_job(
+        {
+            "run_id": run_id,
+            "status": "queued",
+            "cancel_requested": False,
+            "project_root": "/tmp/project",
+            "test_case_text": "Open dashboard",
+            "target_path": None,
+            "create_file": False,
+            "overwrite_existing": False,
+            "language": None,
+            "quality_policy": "strict",
+            "profile": "quick",
+            "source": "tests",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "attempts": [],
+            "result": None,
+        }
+    )
+
+    supervisor = ExecutionSupervisor(
+        orchestrator=_BlockedGenerationOrchestrator(),
+        run_state_store=store,
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+    )
+    asyncio.run(supervisor.execute_run(run_id))
+
+    item = store.get_job(run_id)
+    assert item is not None
+    assert item["status"] == "needs_attention"
+    result = item.get("result") or {}
+    assert result.get("generationBlocked") is True
+    attempts = item.get("attempts", [])
+    assert attempts
+    classification = attempts[0].get("classification", {})
+    assert classification.get("category") == "requirements"

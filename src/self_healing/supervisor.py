@@ -151,6 +151,9 @@ class ExecutionSupervisor:
                         jira_instance=run_record.get("jira_instance"),
                         plan_id=run_record.get("plan_id"),
                         selected_scenario_id=run_record.get("selected_scenario_id"),
+                        selected_scenario_candidate_id=run_record.get("selected_scenario_candidate_id"),
+                        accepted_assumption_ids=run_record.get("accepted_assumption_ids") or [],
+                        clarifications=run_record.get("clarifications") or {},
                         binding_overrides=run_record.get("binding_overrides") or [],
                     )
                 latest_result = result
@@ -171,11 +174,19 @@ class ExecutionSupervisor:
                     break
                 feature_payload = result.get("feature", {})
                 unmatched = feature_payload.get("unmappedSteps", [])
+                generation_meta = feature_payload.get("meta") or {}
+                generation_blocked = bool(generation_meta.get("generationBlocked", False))
+                blocking_reason = str(
+                    generation_meta.get("blockingReason")
+                    or "Generation blocked until required clarifications are provided"
+                )
                 quality_payload = feature_payload.get("quality") or {}
                 quality_passed = True
                 if isinstance(quality_payload, dict):
                     quality_passed = bool(quality_payload.get("passed", False))
-                has_failure = (len(unmatched) > 0) or (not quality_passed)
+                if generation_blocked:
+                    quality_passed = False
+                has_failure = generation_blocked or (len(unmatched) > 0) or (not quality_passed)
 
                 feature_result_artifact = self.artifact_store.publish_json(
                     run_id=run_id,
@@ -192,6 +203,42 @@ class ExecutionSupervisor:
                     else "[]",
                     "artifactUri": artifacts["featureResult"],
                 }
+
+                if generation_blocked:
+                    classification_payload = {
+                        "category": "requirements",
+                        "confidence": 1.0,
+                        "signals": ["generation_blocked"],
+                        "summary": blocking_reason,
+                    }
+                    self.run_state_store.patch_attempt(
+                        run_id,
+                        attempt_id,
+                        status="failed",
+                        finished_at=_utcnow(),
+                        classification=classification_payload,
+                        artifacts=artifacts,
+                    )
+                    self.run_state_store.append_event(
+                        run_id,
+                        "attempt.blocked",
+                        {
+                            "runId": run_id,
+                            "executionId": execution_id,
+                            "attemptId": attempt_id,
+                            "status": "failed",
+                            "classification": classification_payload,
+                        },
+                    )
+                    incident = self._build_incident(
+                        run_record,
+                        attempt_id,
+                        run_id,
+                        execution_id,
+                        classification_payload,
+                        blocking_reason,
+                    )
+                    break
 
                 if not has_failure:
                     succeeded = True
@@ -446,10 +493,13 @@ class ExecutionSupervisor:
             "parameterFillSummary": feature_payload.get("parameterFillSummary", {}),
             "meta": feature_payload.get("meta"),
             "quality": feature_payload.get("quality"),
+            "coverageReport": feature_payload.get("coverageReport"),
             "pipeline": result.get("pipeline", []),
             "fileStatus": result.get("fileStatus"),
             "planId": (feature_payload.get("meta") or {}).get("planId"),
             "selectedScenarioId": (feature_payload.get("meta") or {}).get("selectedScenarioId"),
+            "selectedScenarioCandidateId": (feature_payload.get("meta") or {}).get("selectedScenarioCandidateId"),
+            "generationBlocked": bool((feature_payload.get("meta") or {}).get("generationBlocked", False)),
             "warnings": [
                 str(item.get("code"))
                 for item in (feature_payload.get("quality") or {}).get("warnings", [])

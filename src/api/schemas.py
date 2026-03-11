@@ -189,6 +189,79 @@ class GenerationPlanDto(ApiBaseModel):
     draft_feature_text: str = Field(default="", alias="draftFeatureText")
 
 
+class AssumptionDto(ApiBaseModel):
+    id: str
+    text: str
+    question: str | None = None
+    category: str | None = None
+    field: str | None = None
+
+
+class AmbiguityIssueDto(ApiBaseModel):
+    id: str
+    severity: Literal["blocking", "non_blocking"]
+    category: str
+    field: str | None = None
+    message: str
+    question: str | None = None
+    assumption_id: str | None = Field(default=None, alias="assumptionId")
+
+
+class CanonicalIntentDto(ApiBaseModel):
+    goal: str | None = None
+    actor: str | None = None
+    sut_area: str | None = Field(default=None, alias="sutArea")
+    preconditions: list[str] = Field(default_factory=list)
+    business_rules: list[str] = Field(default_factory=list, alias="businessRules")
+    data_dimensions: list[str] = Field(default_factory=list, alias="dataDimensions")
+    observable_outcomes: list[str] = Field(default_factory=list, alias="observableOutcomes")
+    unknowns: list[str] = Field(default_factory=list)
+    assumptions: list[AssumptionDto] = Field(default_factory=list)
+    confidence: float = 0.0
+    evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
+
+
+class ScenarioCandidateDto(ApiBaseModel):
+    id: str
+    type: str
+    rank: int
+    title: str
+    rationale: str
+    recommended: bool = False
+    confidence: float = 0.0
+    expected_outcomes: list[str] = Field(default_factory=list, alias="expectedOutcomes")
+    assumption_ids: list[str] = Field(default_factory=list, alias="assumptionIds")
+    evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
+    steps: list[str] = Field(default_factory=list)
+    background_steps: list[str] = Field(default_factory=list, alias="backgroundSteps")
+
+
+class EvidenceHitDto(ApiBaseModel):
+    id: str
+    source: str
+    title: str
+    score: float = 0.0
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceSummaryDto(ApiBaseModel):
+    scenarios: list[EvidenceHitDto] = Field(default_factory=list)
+    steps: list[EvidenceHitDto] = Field(default_factory=list)
+    review_signals: list[EvidenceHitDto] = Field(default_factory=list, alias="reviewSignals")
+
+
+class CoverageReportDto(ApiBaseModel):
+    oracle_coverage: float = Field(default=0.0, alias="oracleCoverage")
+    precondition_coverage: float = Field(default=0.0, alias="preconditionCoverage")
+    data_coverage: float = Field(default=0.0, alias="dataCoverage")
+    then_coverage: float = Field(default=0.0, alias="thenCoverage")
+    assumption_count: int = Field(default=0, alias="assumptionCount")
+    new_steps_needed_count: int = Field(default=0, alias="newStepsNeededCount")
+    traceability_score: float = Field(default=0.0, alias="traceabilityScore")
+    flake_risk_flags: list[str] = Field(default_factory=list, alias="flakeRiskFlags")
+    blocking_issue_count: int = Field(default=0, alias="blockingIssueCount")
+
+
 class UnmappedStepDto(ApiBaseModel):
     """РЁР°Рі С‚РµСЃС‚РєРµР№СЃР°, РєРѕС‚РѕСЂС‹Р№ РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕРїРѕСЃС‚Р°РІРёС‚СЊ СЃ cucumber-С€Р°РіРѕРј."""
 
@@ -230,6 +303,15 @@ class QualityMetricsDto(ApiBaseModel):
     weak_match_count: int = Field(default=0, alias="weakMatchCount")
     logical_completeness: bool = Field(default=False, alias="logicalCompleteness")
     quality_score: int = Field(default=0, alias="qualityScore")
+    oracle_coverage: float = Field(default=0.0, alias="oracleCoverage")
+    precondition_coverage: float = Field(default=0.0, alias="preconditionCoverage")
+    data_coverage: float = Field(default=0.0, alias="dataCoverage")
+    then_coverage: float = Field(default=0.0, alias="thenCoverage")
+    assumption_count: int = Field(default=0, alias="assumptionCount")
+    new_steps_needed_count: int = Field(default=0, alias="newStepsNeededCount")
+    traceability_score: float = Field(default=0.0, alias="traceabilityScore")
+    blocking_issue_count: int = Field(default=0, alias="blockingIssueCount")
+    flake_risk_flags: list[str] = Field(default_factory=list, alias="flakeRiskFlags")
 
 
 class QualityReportDto(ApiBaseModel):
@@ -240,6 +322,7 @@ class QualityReportDto(ApiBaseModel):
     warnings: list[QualityFailureDto] = Field(default_factory=list)
     critic_issues: list[str] = Field(default_factory=list, alias="criticIssues")
     metrics: QualityMetricsDto = Field(default_factory=QualityMetricsDto)
+    coverage_report: CoverageReportDto | None = Field(default=None, alias="coverageReport")
 
 
 class PipelineStepDto(ApiBaseModel):
@@ -258,6 +341,8 @@ class StepDetailDto(ApiBaseModel):
     original_step: str = Field(..., alias="originalStep")
     generated_line: str = Field(..., alias="generatedLine")
     status: str
+    binding_status: str | None = Field(default=None, alias="bindingStatus")
+    evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
     meta: dict[str, Any] | None = None
 
 
@@ -364,6 +449,12 @@ class GenerateFeatureRequest(ApiBaseModel):
     )
     plan_id: str | None = Field(default=None, alias="planId")
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(
+        default=None,
+        alias="selectedScenarioCandidateId",
+    )
+    accepted_assumption_ids: list[str] = Field(default_factory=list, alias="acceptedAssumptionIds")
+    clarifications: dict[str, str] = Field(default_factory=dict)
     binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
 
 
@@ -409,6 +500,9 @@ class GenerateFeatureResponse(ApiBaseModel):
     )
     plan_id: str | None = Field(default=None, alias="planId")
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(default=None, alias="selectedScenarioCandidateId")
+    coverage_report: CoverageReportDto | None = Field(default=None, alias="coverageReport")
+    generation_blocked: bool = Field(default=False, alias="generationBlocked")
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -421,6 +515,12 @@ class GenerationPreviewRequest(ApiBaseModel):
         alias="qualityPolicy",
     )
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(
+        default=None,
+        alias="selectedScenarioCandidateId",
+    )
+    accepted_assumption_ids: list[str] = Field(default_factory=list, alias="acceptedAssumptionIds")
+    clarifications: dict[str, str] = Field(default_factory=dict)
     binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
 
 
@@ -431,6 +531,13 @@ class GenerationPreviewResponse(ApiBaseModel):
     generation_plan: GenerationPlanDto = Field(default_factory=GenerationPlanDto, alias="generationPlan")
     draft_feature_text: str = Field(default="", alias="draftFeatureText")
     quality: QualityReportDto | None = None
+    canonical_intent: CanonicalIntentDto | None = Field(default=None, alias="canonicalIntent")
+    ambiguity_issues: list[AmbiguityIssueDto] = Field(default_factory=list, alias="ambiguityIssues")
+    scenario_candidates: list[ScenarioCandidateDto] = Field(default_factory=list, alias="scenarioCandidates")
+    evidence_summary: EvidenceSummaryDto | None = Field(default=None, alias="evidenceSummary")
+    coverage_report: CoverageReportDto | None = Field(default=None, alias="coverageReport")
+    selected_scenario_candidate_id: str | None = Field(default=None, alias="selectedScenarioCandidateId")
+    generation_blocked: bool = Field(default=False, alias="generationBlocked")
     warnings: list[str] = Field(default_factory=list)
     memory_preview: dict[str, Any] | None = Field(default=None, alias="memoryPreview")
 
@@ -469,8 +576,16 @@ class ReviewLearningRequest(ApiBaseModel):
     edited_feature_text: str = Field(..., alias="editedFeatureText")
     overwrite_existing: bool = Field(default=False, alias="overwriteExisting")
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(
+        default=None,
+        alias="selectedScenarioCandidateId",
+    )
     accepted_step_ids: list[str] = Field(default_factory=list, alias="acceptedStepIds")
     rejected_step_ids: list[str] = Field(default_factory=list, alias="rejectedStepIds")
+    accepted_assumption_ids: list[str] = Field(default_factory=list, alias="acceptedAssumptionIds")
+    rejected_candidate_ids: list[str] = Field(default_factory=list, alias="rejectedCandidateIds")
+    binding_decisions: list[dict[str, Any]] = Field(default_factory=list, alias="bindingDecisions")
+    confirmed_clarifications: dict[str, str] = Field(default_factory=dict, alias="confirmedClarifications")
     binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
 
 
@@ -478,6 +593,10 @@ class ReviewLearningResultDto(ApiBaseModel):
     rewrite_rules_saved: int = Field(default=0, alias="rewriteRulesSaved")
     alias_candidates_saved: int = Field(default=0, alias="aliasCandidatesSaved")
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(
+        default=None,
+        alias="selectedScenarioCandidateId",
+    )
     memory_updated_at: datetime | None = Field(default=None, alias="memoryUpdatedAt")
 
 
@@ -537,6 +656,9 @@ class FeatureResultDto(ApiBaseModel):
     quality: QualityReportDto | None = Field(default=None)
     plan_id: str | None = Field(default=None, alias="planId")
     selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    selected_scenario_candidate_id: str | None = Field(default=None, alias="selectedScenarioCandidateId")
+    coverage_report: CoverageReportDto | None = Field(default=None, alias="coverageReport")
+    generation_blocked: bool = Field(default=False, alias="generationBlocked")
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -690,12 +812,18 @@ class GenerationResolvePreviewResponse(ApiBaseModel):
     template_steps: list[str] = Field(default_factory=list, alias="templateSteps")
 
 __all__ = [
+    "AmbiguityIssueDto",
     "ApplyFeatureRequest",
     "ApplyFeatureResponse",
+    "AssumptionDto",
     "BindingCandidateDto",
     "BindingOverrideDto",
+    "CanonicalIntentDto",
     "CanonicalStepDto",
     "CanonicalTestCaseDto",
+    "CoverageReportDto",
+    "EvidenceHitDto",
+    "EvidenceSummaryDto",
     "LlmTestRequest",
     "LlmTestResponse",
     "MemoryFeedbackRequest",
@@ -731,6 +859,7 @@ __all__ = [
     "QualityFailureDto",
     "QualityMetricsDto",
     "QualityReportDto",
+    "ScenarioCandidateDto",
     "StepDetailDto",
     "ScanStepsRequest",
     "ScanStepsResponse",

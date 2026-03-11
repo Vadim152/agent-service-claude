@@ -8,6 +8,9 @@ data class FeatureReviewMetadata(
     val overwriteExisting: Boolean,
     val planId: String?,
     val selectedScenarioId: String?,
+    val selectedScenarioCandidateId: String?,
+    val acceptedAssumptionIds: List<String> = emptyList(),
+    val confirmedClarifications: Map<String, String> = emptyMap(),
     val originalFeatureText: String
 )
 

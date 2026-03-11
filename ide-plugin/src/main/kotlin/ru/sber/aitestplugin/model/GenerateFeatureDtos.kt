@@ -21,6 +21,9 @@ data class GenerateFeatureRequestDto(
     val qualityPolicy: String = "strict",
     val planId: String? = null,
     val selectedScenarioId: String? = null,
+    val selectedScenarioCandidateId: String? = null,
+    val acceptedAssumptionIds: List<String> = emptyList(),
+    val clarifications: Map<String, String> = emptyMap(),
     val bindingOverrides: List<BindingOverrideDto> = emptyList()
 )
 
@@ -35,5 +38,8 @@ data class GenerateFeatureResponseDto(
     val quality: QualityReportDto? = null,
     val planId: String? = null,
     val selectedScenarioId: String? = null,
+    val selectedScenarioCandidateId: String? = null,
+    val coverageReport: CoverageReportDto? = null,
+    val generationBlocked: Boolean = false,
     val warnings: List<String> = emptyList()
 )

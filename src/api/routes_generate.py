@@ -89,6 +89,9 @@ async def preview_generation(
         language=request_model.language,
         quality_policy=request_model.quality_policy,
         selected_scenario_id=request_model.selected_scenario_id,
+        selected_scenario_candidate_id=request_model.selected_scenario_candidate_id,
+        accepted_assumption_ids=request_model.accepted_assumption_ids,
+        clarifications=request_model.clarifications,
         binding_overrides=[
             item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
         ],
@@ -241,10 +244,24 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         explicit_target_path=request_model.target_path is not None,
         plan_id=request_model.plan_id,
         selected_scenario_id=request_model.selected_scenario_id,
+        selected_scenario_candidate_id=request_model.selected_scenario_candidate_id,
+        accepted_assumption_ids=request_model.accepted_assumption_ids,
+        clarifications=request_model.clarifications,
         binding_overrides=[
             item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
         ],
     )
+    generation_meta = result.get("feature", {}).get("meta") or {}
+    if bool(generation_meta.get("generationBlocked", False)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": generation_meta.get("blockingReason")
+                or "Generation blocked until required clarifications are provided",
+                "canonicalIntent": generation_meta.get("canonicalIntent"),
+                "ambiguityIssues": generation_meta.get("ambiguityIssues") or [],
+            },
+        )
 
     feature_payload = result.get("feature", {})
     match_payload = result.get("matchResult", {})
@@ -293,6 +310,9 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         quality=quality,
         plan_id=((feature_payload.get("meta") or {}).get("planId")),
         selected_scenario_id=((feature_payload.get("meta") or {}).get("selectedScenarioId")),
+        selected_scenario_candidate_id=((feature_payload.get("meta") or {}).get("selectedScenarioCandidateId")),
+        coverage_report=quality_payload.get("coverageReport") if isinstance(quality_payload, dict) else None,
+        generation_blocked=bool((feature_payload.get("meta") or {}).get("generationBlocked", False)),
         warnings=[
             str(item.get("code"))
             for item in (quality_payload.get("warnings", []) if isinstance(quality_payload, dict) else [])
@@ -359,8 +379,13 @@ async def review_apply_feature(
         edited_feature_text=request_model.edited_feature_text,
         overwrite_existing=request_model.overwrite_existing,
         selected_scenario_id=request_model.selected_scenario_id,
+        selected_scenario_candidate_id=request_model.selected_scenario_candidate_id,
         accepted_step_ids=request_model.accepted_step_ids,
         rejected_step_ids=request_model.rejected_step_ids,
+        accepted_assumption_ids=request_model.accepted_assumption_ids,
+        rejected_candidate_ids=request_model.rejected_candidate_ids,
+        binding_decisions=request_model.binding_decisions,
+        confirmed_clarifications=request_model.confirmed_clarifications,
         binding_overrides=[
             item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
         ],

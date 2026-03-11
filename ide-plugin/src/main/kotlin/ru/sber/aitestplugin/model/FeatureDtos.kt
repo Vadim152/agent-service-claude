@@ -15,6 +15,9 @@ data class FeatureResultDto(
     val quality: QualityReportDto? = null,
     val planId: String? = null,
     val selectedScenarioId: String? = null,
+    val selectedScenarioCandidateId: String? = null,
+    val coverageReport: CoverageReportDto? = null,
+    val generationBlocked: Boolean = false,
     val warnings: List<String> = emptyList()
 )
 
@@ -47,7 +50,16 @@ data class QualityMetricsDto(
     val missingAssertionCount: Int = 0,
     val weakMatchCount: Int = 0,
     val logicalCompleteness: Boolean = false,
-    val qualityScore: Int = 0
+    val qualityScore: Int = 0,
+    val oracleCoverage: Double = 0.0,
+    val preconditionCoverage: Double = 0.0,
+    val dataCoverage: Double = 0.0,
+    val thenCoverage: Double = 0.0,
+    val assumptionCount: Int = 0,
+    val newStepsNeededCount: Int = 0,
+    val traceabilityScore: Double = 0.0,
+    val blockingIssueCount: Int = 0,
+    val flakeRiskFlags: List<String> = emptyList()
 )
 
 data class QualityReportDto(
@@ -57,5 +69,6 @@ data class QualityReportDto(
     val failures: List<QualityFailureDto> = emptyList(),
     val warnings: List<QualityFailureDto> = emptyList(),
     val criticIssues: List<String> = emptyList(),
-    val metrics: QualityMetricsDto = QualityMetricsDto()
+    val metrics: QualityMetricsDto = QualityMetricsDto(),
+    val coverageReport: CoverageReportDto? = null
 )

@@ -37,10 +37,14 @@ class FeatureGenerator:
         for matched_step in matched_steps:
             rendered, meta = self._render_step(matched_step, self.language)
             scenario_steps.append(rendered)
+            binding_status = self._binding_status(matched_step)
+            evidence_refs = self._evidence_refs(matched_step)
             step_payload: dict[str, Any] = {
                 "originalStep": matched_step.test_step.text,
                 "generatedLine": rendered,
                 "status": matched_step.status.value,
+                "bindingStatus": binding_status,
+                "evidenceRefs": evidence_refs,
             }
             if meta:
                 step_payload["meta"] = meta
@@ -113,10 +117,17 @@ class FeatureGenerator:
         matched_step: MatchedStep,
         language: str | None,
     ) -> tuple[str, dict[str, Any]]:
+        binding_status = self._binding_status(matched_step)
+        evidence_refs = self._evidence_refs(matched_step)
         if is_table_row(matched_step.test_step.text):
             line = matched_step.test_step.text.strip()
             return line, self._with_normalization_meta(
-                {"substitutionType": "table_row", "renderSource": "table_row"},
+                {
+                    "substitutionType": "table_row",
+                    "renderSource": "table_row",
+                    "bindingStatus": binding_status,
+                    "evidenceRefs": evidence_refs,
+                },
                 matched_step,
             )
 
@@ -124,7 +135,12 @@ class FeatureGenerator:
             return (
                 self._localize_generated_line(matched_step.generated_gherkin_line, language),
                 self._with_normalization_meta(
-                    {"substitutionType": "generated", "renderSource": "generated_line"},
+                    {
+                        "substitutionType": "generated",
+                        "renderSource": "generated_line",
+                        "bindingStatus": binding_status,
+                        "evidenceRefs": evidence_refs,
+                    },
                     matched_step,
                 ),
             )
@@ -132,7 +148,12 @@ class FeatureGenerator:
         if matched_step.resolved_step_text:
             keyword = self._select_keyword(matched_step, language)
             line = f"{keyword} {matched_step.resolved_step_text}".strip()
-            meta: dict[str, Any] = {"substitutionType": "resolved", "renderSource": "definition_pattern"}
+            meta: dict[str, Any] = {
+                "substitutionType": "resolved",
+                "renderSource": "definition_pattern",
+                "bindingStatus": binding_status,
+                "evidenceRefs": evidence_refs,
+            }
             if matched_step.parameter_fill_meta:
                 fill_meta = dict(matched_step.parameter_fill_meta)
                 meta["parameterFill"] = fill_meta
@@ -150,14 +171,21 @@ class FeatureGenerator:
             reason = None
             if isinstance(matched_step.notes, dict):
                 reason = matched_step.notes.get("reason")
-            marker = reason or "unmatched"
+            marker = reason or binding_status or "unmatched"
             line = f"{StepKeyword.WHEN.as_text(language)} <{marker}: {matched_step.test_step.text}>"
-            meta: dict[str, Any] = {"substitutionType": "unmatched", "renderSource": "unmatched"}
+            meta: dict[str, Any] = {
+                "substitutionType": "unmatched",
+                "renderSource": "unmatched",
+                "bindingStatus": binding_status,
+                "evidenceRefs": evidence_refs,
+            }
             if reason:
                 meta["reason"] = reason
             return line, self._with_normalization_meta(meta, matched_step)
 
         rendered, meta = self._build_gherkin_line(matched_step, language)
+        meta["bindingStatus"] = binding_status
+        meta["evidenceRefs"] = evidence_refs
         return rendered, self._with_normalization_meta(meta, matched_step)
 
     def _localize_generated_line(self, line: str, language: str | None) -> str:
@@ -236,3 +264,19 @@ class FeatureGenerator:
         if strategy:
             enriched["normalizationStrategy"] = strategy
         return enriched
+
+    @staticmethod
+    def _binding_status(matched_step: MatchedStep) -> str:
+        if isinstance(matched_step.notes, dict):
+            status = str(matched_step.notes.get("bindingStatus") or "").strip()
+            if status:
+                return status
+        return matched_step.status.value
+
+    @staticmethod
+    def _evidence_refs(matched_step: MatchedStep) -> list[str]:
+        if isinstance(matched_step.notes, dict):
+            values = matched_step.notes.get("evidenceRefs")
+            if isinstance(values, list):
+                return [str(item) for item in values if str(item).strip()]
+        return []

@@ -41,6 +41,9 @@ class RunService:
         test_case_text: str,
         plan_id: str | None,
         selected_scenario_id: str | None,
+        selected_scenario_candidate_id: str | None,
+        accepted_assumption_ids: list[str] | None,
+        clarifications: dict[str, Any] | None,
         binding_overrides: list[dict[str, Any]] | None,
         target_path: str | None,
         create_file: bool,
@@ -78,6 +81,9 @@ class RunService:
             "test_case_text": test_case_text,
             "plan_id": plan_id,
             "selected_scenario_id": selected_scenario_id,
+            "selected_scenario_candidate_id": selected_scenario_candidate_id,
+            "accepted_assumption_ids": list(accepted_assumption_ids or []),
+            "clarifications": dict(clarifications or {}),
             "binding_overrides": list(binding_overrides or []),
             "target_path": target_path,
             "create_file": create_file,
@@ -166,6 +172,12 @@ class RunService:
                 test_case_text=test_case_text,
                 plan_id=input_payload.get("planId") or input_payload.get("plan_id"),
                 selected_scenario_id=input_payload.get("selectedScenarioId") or input_payload.get("selected_scenario_id"),
+                selected_scenario_candidate_id=input_payload.get("selectedScenarioCandidateId")
+                or input_payload.get("selected_scenario_candidate_id"),
+                accepted_assumption_ids=input_payload.get("acceptedAssumptionIds")
+                or input_payload.get("accepted_assumption_ids")
+                or [],
+                clarifications=input_payload.get("clarifications") or {},
                 binding_overrides=input_payload.get("bindingOverrides") or input_payload.get("binding_overrides") or [],
                 target_path=input_payload.get("targetPath") or input_payload.get("target_path"),
                 create_file=bool(input_payload.get("createFile", input_payload.get("create_file", False))),

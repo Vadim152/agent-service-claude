@@ -86,14 +86,11 @@ class ApplyFeatureAction : AnAction() {
                 indicator.text = "Sending feature to backend..."
                 if (reviewMetadata != null) {
                     reviewResponse = backendClient.reviewApplyFeature(
-                        ReviewLearningRequestDto(
-                            projectRoot = reviewMetadata.projectRoot,
-                            planId = reviewMetadata.planId,
+                        buildReviewLearningRequest(
+                            reviewMetadata = reviewMetadata,
                             targetPath = dialogOptions.targetPath ?: reviewMetadata.targetPath.orEmpty(),
-                            originalFeatureText = reviewMetadata.originalFeatureText,
-                            editedFeatureText = featureText,
+                            featureText = featureText,
                             overwriteExisting = dialogOptions.overwriteExisting,
-                            selectedScenarioId = reviewMetadata.selectedScenarioId
                         )
                     )
                     response = reviewResponse?.fileStatus
@@ -132,3 +129,21 @@ class ApplyFeatureAction : AnAction() {
             .notify(project)
     }
 }
+
+internal fun buildReviewLearningRequest(
+    reviewMetadata: ru.sber.aitestplugin.model.FeatureReviewMetadata,
+    targetPath: String,
+    featureText: String,
+    overwriteExisting: Boolean,
+): ReviewLearningRequestDto = ReviewLearningRequestDto(
+    projectRoot = reviewMetadata.projectRoot,
+    planId = reviewMetadata.planId,
+    targetPath = targetPath,
+    originalFeatureText = reviewMetadata.originalFeatureText,
+    editedFeatureText = featureText,
+    overwriteExisting = overwriteExisting,
+    selectedScenarioId = reviewMetadata.selectedScenarioId,
+    selectedScenarioCandidateId = reviewMetadata.selectedScenarioCandidateId,
+    acceptedAssumptionIds = reviewMetadata.acceptedAssumptionIds,
+    confirmedClarifications = reviewMetadata.confirmedClarifications,
+)

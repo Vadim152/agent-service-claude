@@ -43,6 +43,9 @@ def evaluate_generation_quality(
     match_result: dict[str, Any],
     scenario: dict[str, Any] | None = None,
     policy: str | None = None,
+    canonical_intent: dict[str, Any] | None = None,
+    ambiguity_issues: list[dict[str, Any]] | None = None,
+    selected_scenario_candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_quality_policy(policy)
     policy_limits = QUALITY_POLICIES[normalized_policy]
@@ -104,6 +107,14 @@ def evaluate_generation_quality(
     assertion_count = len(assertion_steps)
     missing_assertion_count = max(0, expected_result_count - assertion_count)
     logical_complete = total_steps > 0 and (expected_result_count == 0 or assertion_count > 0)
+    coverage_report = build_coverage_report(
+        feature_payload=feature_payload,
+        match_result=match_result,
+        scenario=scenario_payload,
+        canonical_intent=canonical_intent,
+        ambiguity_issues=ambiguity_issues,
+        selected_scenario_candidate=selected_scenario_candidate,
+    )
 
     syntax_valid, critic_issues = _validate_feature_syntax(feature_text)
     score = _compute_quality_score(
@@ -119,6 +130,12 @@ def evaluate_generation_quality(
         weak_match_count=weak_match_count,
         missing_assertion_count=missing_assertion_count,
         logical_complete=logical_complete,
+        oracle_coverage=float(coverage_report.get("oracleCoverage", 1.0)),
+        then_coverage=float(coverage_report.get("thenCoverage", 1.0)),
+        blocking_ambiguity_count=int(coverage_report.get("blockingIssueCount", 0)),
+        assumption_count=int(coverage_report.get("assumptionCount", 0)),
+        new_steps_needed_count=int(coverage_report.get("newStepsNeededCount", 0)),
+        flake_risk_count=len(coverage_report.get("flakeRiskFlags", [])),
     )
 
     failures: list[dict[str, Any]] = []
@@ -152,6 +169,48 @@ def evaluate_generation_quality(
                 "message": "Too many ambiguous step matches for selected quality policy",
                 "actual": ambiguous_count,
                 "expected": f"<= {max_ambiguous_count}",
+            }
+        )
+
+    if int(coverage_report.get("blockingIssueCount", 0)) > 0:
+        failures.append(
+            {
+                "code": "blocking_ambiguity",
+                "message": "Critical testcase ambiguity must be resolved before generation is considered safe",
+                "actual": int(coverage_report.get("blockingIssueCount", 0)),
+                "expected": 0,
+            }
+        )
+
+    if float(coverage_report.get("oracleCoverage", 1.0)) <= 0.0:
+        failures.append(
+            {
+                "code": "oracle_coverage_missing",
+                "message": "Generated scenario lacks explicit observable outcome coverage",
+                "actual": float(coverage_report.get("oracleCoverage", 0.0)),
+                "expected": "> 0",
+            }
+        )
+
+    if float(coverage_report.get("thenCoverage", 1.0)) <= 0.0:
+        failures.append(
+            {
+                "code": "then_coverage_missing",
+                "message": "Generated scenario does not preserve Then/assertion coverage for the selected intent",
+                "actual": float(coverage_report.get("thenCoverage", 0.0)),
+                "expected": "> 0",
+            }
+        )
+
+    new_steps_needed_count = int(coverage_report.get("newStepsNeededCount", 0))
+    new_step_failure_threshold = max(1, int((total_steps or 1) * 0.4))
+    if new_steps_needed_count >= new_step_failure_threshold:
+        failures.append(
+            {
+                "code": "new_steps_needed_exceeded",
+                "message": "Too many unresolved actions require new automation steps for this draft",
+                "actual": new_steps_needed_count,
+                "expected": f"<= {new_step_failure_threshold}",
             }
         )
 
@@ -198,6 +257,26 @@ def evaluate_generation_quality(
             }
         )
 
+    if int(coverage_report.get("assumptionCount", 0)) > 0:
+        warnings.append(
+            {
+                "code": "assumptions_present",
+                "message": "Generation relied on explicit assumptions that should be reviewed",
+                "actual": int(coverage_report.get("assumptionCount", 0)),
+                "expected": 0,
+            }
+        )
+
+    if coverage_report.get("flakeRiskFlags"):
+        warnings.append(
+            {
+                "code": "flake_risk_flags_present",
+                "message": "Binding or oracle signals indicate increased flaky-test risk",
+                "actual": list(coverage_report.get("flakeRiskFlags", [])),
+                "expected": [],
+            }
+        )
+
     min_score = int(policy_limits["min_score"])
     if score < min_score:
         failures.append(
@@ -226,6 +305,15 @@ def evaluate_generation_quality(
         "weakMatchCount": weak_match_count,
         "logicalCompleteness": logical_complete,
         "qualityScore": score,
+        "oracleCoverage": round(float(coverage_report.get("oracleCoverage", 1.0)), 4),
+        "preconditionCoverage": round(float(coverage_report.get("preconditionCoverage", 1.0)), 4),
+        "dataCoverage": round(float(coverage_report.get("dataCoverage", 1.0)), 4),
+        "thenCoverage": round(float(coverage_report.get("thenCoverage", 1.0)), 4),
+        "assumptionCount": int(coverage_report.get("assumptionCount", 0)),
+        "newStepsNeededCount": int(coverage_report.get("newStepsNeededCount", 0)),
+        "traceabilityScore": round(float(coverage_report.get("traceabilityScore", 1.0)), 4),
+        "blockingIssueCount": int(coverage_report.get("blockingIssueCount", 0)),
+        "flakeRiskFlags": list(coverage_report.get("flakeRiskFlags", [])),
     }
     return {
         "policy": normalized_policy,
@@ -235,6 +323,139 @@ def evaluate_generation_quality(
         "warnings": warnings,
         "criticIssues": critic_issues,
         "metrics": metrics,
+        "coverageReport": coverage_report,
+    }
+
+
+def build_coverage_report(
+    *,
+    feature_payload: dict[str, Any],
+    match_result: dict[str, Any],
+    scenario: dict[str, Any] | None = None,
+    canonical_intent: dict[str, Any] | None = None,
+    ambiguity_issues: list[dict[str, Any]] | None = None,
+    selected_scenario_candidate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    scenario = scenario or {}
+    canonical_intent = canonical_intent or {}
+    ambiguity_issues = ambiguity_issues or []
+    selected_scenario_candidate = selected_scenario_candidate or {}
+    match_entries = [
+        item for item in (match_result.get("matched") or []) if isinstance(item, dict)
+    ]
+    feature_text = str(feature_payload.get("featureText", "") or "")
+    preconditions = [str(item).strip() for item in canonical_intent.get("preconditions", []) if str(item).strip()]
+    observable_outcomes = [
+        str(item).strip()
+        for item in canonical_intent.get("observableOutcomes", [])
+        if str(item).strip()
+    ]
+    data_dimensions = [
+        str(item).strip()
+        for item in canonical_intent.get("dataDimensions", [])
+        if str(item).strip()
+    ]
+    assumptions = [
+        item
+        for item in canonical_intent.get("assumptions", [])
+        if isinstance(item, dict) and not bool(item.get("accepted"))
+    ]
+    blocking_issue_count = len(
+        [item for item in ambiguity_issues if str(item.get("severity") or "").casefold() == "blocking"]
+    )
+
+    bound_entries = []
+    new_steps_needed_count = 0
+    manual_review_count = 0
+    for item in match_entries:
+        status = str(item.get("status") or "").casefold()
+        notes = item.get("notes") if isinstance(item.get("notes"), dict) else {}
+        binding_status = str(notes.get("bindingStatus") or status or "unmatched").casefold()
+        if binding_status == "new_step_needed":
+            new_steps_needed_count += 1
+        if binding_status == "manual_review":
+            manual_review_count += 1
+        if status != "unmatched":
+            bound_entries.append(item)
+
+    matched_preconditions = [
+        item
+        for item in bound_entries
+        if str(((item.get("test_step") or {}).get("section") or "")).casefold() in {"precondition", "template"}
+    ]
+    assertion_count = len(
+        [
+            line
+            for line in feature_text.splitlines()
+            if line.strip().casefold().startswith(("then ", "тогда "))
+        ]
+    )
+    precondition_coverage = (
+        len(matched_preconditions) / len(preconditions)
+        if preconditions
+        else 1.0
+    )
+    if observable_outcomes:
+        oracle_coverage = 1.0 if assertion_count > 0 else 0.0
+        then_coverage = min(1.0, assertion_count / max(1, len(observable_outcomes)))
+    else:
+        oracle_coverage = 1.0
+        then_coverage = 1.0
+
+    if data_dimensions:
+        token_hits = 0
+        lowered_feature = feature_text.casefold()
+        for item in data_dimensions:
+            normalized = str(item).strip().casefold()
+            if normalized and normalized in lowered_feature:
+                token_hits += 1
+        data_coverage = min(1.0, token_hits / max(1, len(data_dimensions)))
+        if token_hits == 0 and feature_payload.get("parameterFillSummary"):
+            fill_summary = feature_payload.get("parameterFillSummary") or {}
+            data_coverage = 1.0 if int(fill_summary.get("full", 0) or 0) > 0 else 0.0
+    else:
+        data_coverage = 1.0
+
+    assumption_count = len(assumptions)
+    traceability_score = max(
+        0.0,
+        min(
+            1.0,
+            (
+                oracle_coverage
+                + precondition_coverage
+                + data_coverage
+                + then_coverage
+                + (1.0 if feature_text.strip() else 0.0)
+            )
+            / 5.0
+            - (assumption_count * 0.03)
+            - (manual_review_count * 0.05),
+        ),
+    )
+    flake_risk_flags: list[str] = []
+    if int(match_result.get("ambiguousCount", 0) or 0) > 0:
+        flake_risk_flags.append("ambiguous_bindings")
+    if int(match_result.get("llmRerankedCount", 0) or 0) > 0:
+        flake_risk_flags.append("llm_reranked_bindings")
+    if new_steps_needed_count > 0:
+        flake_risk_flags.append("new_steps_needed")
+    if manual_review_count > 0:
+        flake_risk_flags.append("manual_review_bindings")
+    if assumption_count > 2:
+        flake_risk_flags.append("high_assumption_count")
+    if str(selected_scenario_candidate.get("type") or "").casefold() == "boundary_data":
+        flake_risk_flags.append("boundary_variant")
+    return {
+        "oracleCoverage": round(float(oracle_coverage), 4),
+        "preconditionCoverage": round(float(precondition_coverage), 4),
+        "dataCoverage": round(float(data_coverage), 4),
+        "thenCoverage": round(float(then_coverage), 4),
+        "assumptionCount": assumption_count,
+        "newStepsNeededCount": new_steps_needed_count,
+        "traceabilityScore": round(float(traceability_score), 4),
+        "flakeRiskFlags": flake_risk_flags,
+        "blockingIssueCount": blocking_issue_count,
     }
 
 
@@ -252,6 +473,12 @@ def _compute_quality_score(
     weak_match_count: int,
     missing_assertion_count: int,
     logical_complete: bool,
+    oracle_coverage: float,
+    then_coverage: float,
+    blocking_ambiguity_count: int,
+    assumption_count: int,
+    new_steps_needed_count: int,
+    flake_risk_count: int,
 ) -> int:
     score = 100.0
     if not syntax_valid:
@@ -264,6 +491,12 @@ def _compute_quality_score(
     score -= min(12.0, (1.0 - expected_result_coverage) * 20.0)
     score -= min(10.0, float(weak_match_count) * 2.0)
     score -= min(12.0, float(missing_assertion_count) * 4.0)
+    score -= min(18.0, (1.0 - oracle_coverage) * 18.0)
+    score -= min(14.0, (1.0 - then_coverage) * 14.0)
+    score -= min(20.0, float(blocking_ambiguity_count) * 12.0)
+    score -= min(10.0, float(assumption_count) * 1.5)
+    score -= min(18.0, float(new_steps_needed_count) * 4.0)
+    score -= min(12.0, float(flake_risk_count) * 2.0)
     if total_steps == 0:
         score -= 25.0
     if not logical_complete:
@@ -297,4 +530,9 @@ def _validate_feature_syntax(feature_text: str) -> tuple[bool, list[str]]:
     return len(issues) == 0, issues
 
 
-__all__ = ["evaluate_generation_quality", "normalize_quality_policy", "QUALITY_POLICIES"]
+__all__ = [
+    "build_coverage_report",
+    "evaluate_generation_quality",
+    "normalize_quality_policy",
+    "QUALITY_POLICIES",
+]

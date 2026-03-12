@@ -196,19 +196,19 @@ class RunService:
                 quality_policy_explicit="qualityPolicy" in input_payload or "quality_policy" in input_payload,
                 plugin=plugin,
             )
-        elif plugin == "opencode":
+        elif plugin == "agent":
             prompt = str(input_payload.get("prompt") or input_payload.get("message") or input_payload.get("content") or "").strip()
             if not prompt:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="opencode runs require input.prompt or input.message",
+                    detail="agent runs require input.prompt or input.message",
                 )
             job_payload = {
                 "run_id": run_id,
                 "status": "queued",
                 "plugin": plugin,
-                "runtime": "opencode",
-                "backend": "opencode-adapter",
+                "runtime": "agent",
+                "backend": "claude_code",
                 "backend_run_id": None,
                 "backend_session_id": input_payload.get("backendSessionId") or input_payload.get("backend_session_id"),
                 "sync_cursor": 0,

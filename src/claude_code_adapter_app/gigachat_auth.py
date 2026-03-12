@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from base64 import b64encode
 import uuid
 
 import httpx
 
-from opencode_adapter_app.config import AdapterSettings
+from claude_code_adapter_app.config import AdapterSettings
 
 
 class GigaChatAuthError(RuntimeError):
@@ -43,3 +43,4 @@ def fetch_access_token(settings: AdapterSettings) -> str:
     if not token:
         raise GigaChatAuthError("GigaChat auth endpoint did not return access_token")
     return token
+

@@ -20,7 +20,7 @@ from infrastructure.postgres_run_state_store import PostgresRunStateStore
 from infrastructure.run_state_store import RunStateStore
 from infrastructure.tool_host_client import RemoteToolHostClient
 from policy import InMemoryPolicyStore, PostgresPolicyStore
-from runtime.opencode_adapter import HttpOpenCodeAdapterClient
+from runtime.agent_adapter import HttpClaudeCodeAdapterClient
 
 
 def create_run_state_store(settings: Settings):
@@ -110,13 +110,13 @@ def create_tool_host_client(settings: Settings):
     raise ValueError(f"Unsupported tool host mode: {settings.tool_host_mode}")
 
 
-def create_opencode_adapter_client(settings: Settings):
-    mode = (settings.opencode_backend_mode or "disabled").strip().lower()
+def create_agent_adapter_client(settings: Settings):
+    mode = (settings.agent_backend_mode or "disabled").strip().lower()
     if mode == "disabled":
         return None
     if mode == "http":
-        return HttpOpenCodeAdapterClient(
-            base_url=str(settings.opencode_adapter_url),
-            timeout_s=float(settings.opencode_request_timeout_s),
+        return HttpClaudeCodeAdapterClient(
+            base_url=str(settings.agent_adapter_url),
+            timeout_s=float(settings.agent_request_timeout_s),
         )
-    raise ValueError(f"Unsupported opencode backend mode: {settings.opencode_backend_mode}")
+    raise ValueError(f"Unsupported agent backend mode: {settings.agent_backend_mode}")

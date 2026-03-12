@@ -1,1 +1,0 @@
-"""OpenCode adapter application package."""

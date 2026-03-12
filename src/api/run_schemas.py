@@ -11,7 +11,7 @@ from api.schemas import ApiBaseModel, FeatureResultDto, RunAttemptDto
 
 class RunCreateRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
-    plugin: Literal["testgen", "ift", "debug", "browser", "analytics", "opencode"]
+    plugin: Literal["testgen", "ift", "debug", "browser", "analytics", "agent"]
     input: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = Field(default=None, alias="sessionId")
     profile: str = "quick"

@@ -14,7 +14,7 @@ class ChatSessionCreateRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     source: str = Field(default="ide-plugin")
     profile: str = Field(default="quick")
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     reuse_existing: bool = Field(default=True, alias="reuseExisting")
     zephyr_auth: ZephyrAuth | None = Field(default=None, alias="zephyrAuth")
     jira_instance: str | None = Field(default=None, alias="jiraInstance")
@@ -23,7 +23,7 @@ class ChatSessionCreateRequest(ApiBaseModel):
 class ChatSessionCreateResponse(ApiBaseModel):
     session_id: str = Field(..., alias="sessionId")
     created_at: datetime = Field(..., alias="createdAt")
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     reused: bool = False
     memory_snapshot: dict[str, Any] = Field(default_factory=dict, alias="memorySnapshot")
 
@@ -33,7 +33,7 @@ class ChatSessionListItemDto(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     source: str = "ide-plugin"
     profile: str = "quick"
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     status: str = "active"
     activity: str = "idle"
     current_action: str = Field(default="Idle", alias="currentAction")
@@ -103,7 +103,7 @@ class ChatHistoryResponse(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     source: str
     profile: str
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     status: str
     messages: list[ChatMessageDto] = Field(default_factory=list)
     events: list[ChatEventDto] = Field(default_factory=list)
@@ -141,7 +141,7 @@ class ChatRiskDto(ApiBaseModel):
 
 class ChatSessionStatusResponse(ApiBaseModel):
     session_id: str = Field(..., alias="sessionId")
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     activity: str
     current_action: str = Field(..., alias="currentAction")
     last_event_at: datetime = Field(..., alias="lastEventAt")
@@ -174,7 +174,7 @@ class ChatDiffFileDto(ApiBaseModel):
 
 class ChatSessionDiffResponse(ApiBaseModel):
     session_id: str = Field(..., alias="sessionId")
-    runtime: Literal["chat", "opencode"] = "chat"
+    runtime: Literal["chat", "agent"] = "chat"
     summary: ChatDiffSummaryDto = Field(default_factory=ChatDiffSummaryDto)
     files: list[ChatDiffFileDto] = Field(default_factory=list)
     updated_at: datetime = Field(..., alias="updatedAt")

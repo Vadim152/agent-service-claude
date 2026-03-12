@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import logging
@@ -10,18 +10,18 @@ from typing import Any, Iterator
 
 import httpx
 
-from opencode_adapter_app.config import AdapterSettings
-from opencode_adapter_app.gigachat_auth import GigaChatAuthError, fetch_access_token
+from claude_code_adapter_app.config import AdapterSettings
+from claude_code_adapter_app.gigachat_auth import GigaChatAuthError, fetch_access_token
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-class OpenCodeServerError(RuntimeError):
+class ClaudeCodeServerError(RuntimeError):
     pass
 
 
-class OpenCodeHeadlessServer:
+class ClaudeCodeHeadlessServer:
     def __init__(self, *, settings: AdapterSettings) -> None:
         self._settings = settings
         self._lock = threading.RLock()
@@ -72,8 +72,8 @@ class OpenCodeHeadlessServer:
     def ensure_started(self, *, project_root: str | None = None) -> str:
         with self._lock:
             resolved_project_root = str(project_root) if project_root else None
-            resolved_config_file = self._settings.resolve_opencode_config_file(resolved_project_root)
-            resolved_config_dir = self._settings.resolve_opencode_config_dir(resolved_project_root)
+            resolved_config_file = self._settings.resolve_claude_code_config_file(resolved_project_root)
+            resolved_config_dir = self._settings.resolve_claude_code_config_dir(resolved_project_root)
             if (
                 self._process is not None
                 and self._process.poll() is None
@@ -93,8 +93,8 @@ class OpenCodeHeadlessServer:
     def restart(self, *, project_root: str | None = None) -> str:
         with self._lock:
             resolved_project_root = str(project_root) if project_root else None
-            resolved_config_file = self._settings.resolve_opencode_config_file(resolved_project_root)
-            resolved_config_dir = self._settings.resolve_opencode_config_dir(resolved_project_root)
+            resolved_config_file = self._settings.resolve_claude_code_config_file(resolved_project_root)
+            resolved_config_dir = self._settings.resolve_claude_code_config_dir(resolved_project_root)
             self._stop_locked()
             self._start_locked(
                 project_root=resolved_project_root,
@@ -130,7 +130,7 @@ class OpenCodeHeadlessServer:
             )
             response.raise_for_status()
         except Exception as exc:
-            raise OpenCodeServerError(f"OpenCode server request failed: {exc}") from exc
+            raise ClaudeCodeServerError(f"Claude Code server request failed: {exc}") from exc
         if not response.content:
             return {}
         return response.json()
@@ -171,7 +171,7 @@ class OpenCodeHeadlessServer:
                 continue
             except Exception as exc:
                 if not stop_event.is_set():
-                    raise OpenCodeServerError(f"OpenCode event stream failed: {exc}") from exc
+                    raise ClaudeCodeServerError(f"Claude Code event stream failed: {exc}") from exc
 
     def _is_ready(self) -> bool:
         try:
@@ -189,8 +189,8 @@ class OpenCodeHeadlessServer:
     ) -> None:
         log_dir = self._settings.work_root
         log_dir.mkdir(parents=True, exist_ok=True)
-        stdout_path = log_dir / "opencode-serve.stdout.log"
-        stderr_path = log_dir / "opencode-serve.stderr.log"
+        stdout_path = log_dir / "claude-code-serve.stdout.log"
+        stderr_path = log_dir / "claude-code-serve.stderr.log"
         self._stdout_handle = stdout_path.open("a", encoding="utf-8")
         self._stderr_handle = stderr_path.open("a", encoding="utf-8")
         command = [
@@ -211,7 +211,7 @@ class OpenCodeHeadlessServer:
         )
         self._inject_gigachat_access_token(env)
         LOGGER.info(
-            "Starting OpenCode headless server for project_root=%s config_file=%s config_dir=%s",
+            "Starting Claude Code headless server for project_root=%s config_file=%s config_dir=%s",
             project_root,
             config_file,
             config_dir,
@@ -230,14 +230,14 @@ class OpenCodeHeadlessServer:
         deadline = time.time() + max(5.0, self._settings.run_start_timeout_ms / 1000.0)
         while time.time() < deadline:
             if self._process.poll() is not None:
-                raise OpenCodeServerError("OpenCode headless server exited before becoming ready")
+                raise ClaudeCodeServerError("Claude Code headless server exited before becoming ready")
             if self._is_ready():
                 self._active_project_root = project_root
                 self._active_config_file = config_file
                 self._active_config_dir = config_dir
                 return
             time.sleep(0.2)
-        raise OpenCodeServerError("OpenCode headless server did not become ready in time")
+        raise ClaudeCodeServerError("Claude Code headless server did not become ready in time")
 
     def _inject_gigachat_access_token(self, env: dict[str, str], *, force_refresh: bool = False) -> None:
         if env.get("GIGACHAT_ACCESS_TOKEN") and not force_refresh:
@@ -247,11 +247,11 @@ class OpenCodeHeadlessServer:
         try:
             token = fetch_access_token(self._settings)
         except GigaChatAuthError as exc:
-            LOGGER.warning("Failed to bootstrap GigaChat access token for OpenCode: %s", exc)
+            LOGGER.warning("Failed to bootstrap GigaChat access token for ClaudeCode: %s", exc)
             return
         env["GIGACHAT_ACCESS_TOKEN"] = token
         env.setdefault("GIGACHAT_API_URL", self._settings.gigachat_api_url)
-        LOGGER.info("Bootstrapped GigaChat access token for OpenCode provider")
+        LOGGER.info("Bootstrapped GigaChat access token for Claude Code provider")
 
     def refresh_gigachat_access_token(self) -> str:
         with self._lock:
@@ -263,7 +263,7 @@ class OpenCodeHeadlessServer:
             self._inject_gigachat_access_token(env, force_refresh=True)
             token = str(env.get("GIGACHAT_ACCESS_TOKEN") or "").strip()
             if not token:
-                raise OpenCodeServerError("Failed to refresh GigaChat access token")
+                raise ClaudeCodeServerError("Failed to refresh GigaChat access token")
             return token
 
     def _stop_locked(self) -> None:
@@ -388,3 +388,4 @@ def _is_sensitive_key(key: Any) -> bool:
         "bearer",
     )
     return any(marker in normalized for marker in markers)
+

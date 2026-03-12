@@ -9,22 +9,30 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.logging_config import init_logging
-from opencode_adapter_app.config import AdapterSettings, get_settings
-from opencode_adapter_app.errors import AdapterApiError, build_error_payload
-from opencode_adapter_app.headless_server import OpenCodeHeadlessServer
-from opencode_adapter_app.schemas import AdapterDebugRuntimeResponse
-from opencode_adapter_app.process_supervisor import OpenCodeProcessSupervisor
-from opencode_adapter_app.routes import router as api_router
-from opencode_adapter_app.service import OpenCodeAdapterService
-from opencode_adapter_app.state_store import OpenCodeAdapterStateStore
+from claude_code_adapter_app.config import AdapterSettings, get_settings
+from claude_code_adapter_app.errors import AdapterApiError, build_error_payload
+from claude_code_adapter_app.headless_server import ClaudeCodeHeadlessServer
+from claude_code_adapter_app.process_supervisor import ClaudeCodeProcessSupervisor
+from claude_code_adapter_app.routes import router as api_router
+from claude_code_adapter_app.schemas import AdapterDebugRuntimeResponse
+from claude_code_adapter_app.service import ClaudeCodeAdapterService
+from claude_code_adapter_app.state_store import ClaudeCodeAdapterStateStore
 
 
 def create_app(settings: AdapterSettings | None = None) -> FastAPI:
     resolved = settings or get_settings()
-    state_store = OpenCodeAdapterStateStore.from_settings(resolved)
-    headless_server = OpenCodeHeadlessServer(settings=resolved)
-    supervisor = OpenCodeProcessSupervisor(settings=resolved, state_store=state_store, headless_server=headless_server)
-    service = OpenCodeAdapterService(settings=resolved, state_store=state_store, process_supervisor=supervisor)
+    state_store = ClaudeCodeAdapterStateStore.from_settings(resolved)
+    headless_server = ClaudeCodeHeadlessServer(settings=resolved)
+    supervisor = ClaudeCodeProcessSupervisor(
+        settings=resolved,
+        state_store=state_store,
+        headless_server=headless_server,
+    )
+    service = ClaudeCodeAdapterService(
+        settings=resolved,
+        state_store=state_store,
+        process_supervisor=supervisor,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -34,28 +42,31 @@ def create_app(settings: AdapterSettings | None = None) -> FastAPI:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
         if resolved.default_model and not resolved.model_override:
             logging.getLogger(__name__).warning(
-                "OPENCODE_ADAPTER_DEFAULT_MODEL is deprecated; use "
-                "OPENCODE_ADAPTER_MODEL_MODE=override with OPENCODE_ADAPTER_MODEL_OVERRIDE."
+                "CLAUDE_CODE_ADAPTER_DEFAULT_MODEL is deprecated; use "
+                "CLAUDE_CODE_ADAPTER_MODEL_MODE=override with CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE."
             )
         logging.getLogger(__name__).info(
-            "OpenCode adapter model resolution mode: %s",
+            "Claude Code adapter model resolution mode: %s",
             resolved.model_resolution_description(),
         )
         restarted = state_store.mark_inflight_runs_failed()
         if restarted:
-            logging.getLogger(__name__).warning("Marked %s in-flight OpenCode runs as failed after restart", len(restarted))
+            logging.getLogger(__name__).warning(
+                "Marked %s in-flight Claude Code runs as failed after restart",
+                len(restarted),
+            )
         try:
             yield
         finally:
             state_store.close()
             headless_server.shutdown()
 
-    app = FastAPI(title="opencode-adapter", lifespan=lifespan)
+    app = FastAPI(title="claude-code-adapter", lifespan=lifespan)
     app.state.adapter_settings = resolved
-    app.state.opencode_headless_server = headless_server
-    app.state.opencode_adapter_state_store = state_store
-    app.state.opencode_adapter_supervisor = supervisor
-    app.state.opencode_adapter_service = service
+    app.state.claude_code_headless_server = headless_server
+    app.state.claude_code_adapter_state_store = state_store
+    app.state.claude_code_adapter_supervisor = supervisor
+    app.state.claude_code_adapter_service = service
 
     @app.middleware("http")
     async def _request_id_middleware(request: Request, call_next):
@@ -93,7 +104,7 @@ def create_app(settings: AdapterSettings | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        logging.getLogger(__name__).exception("Unhandled exception in opencode-adapter", exc_info=exc)
+        logging.getLogger(__name__).exception("Unhandled exception in claude-code-adapter", exc_info=exc)
         return JSONResponse(
             status_code=500,
             content=build_error_payload(
@@ -107,7 +118,7 @@ def create_app(settings: AdapterSettings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "opencode-adapter"}
+        return {"status": "ok", "service": "claude-code-adapter"}
 
     @app.get("/debug/runtime", response_model=AdapterDebugRuntimeResponse)
     async def debug_runtime() -> AdapterDebugRuntimeResponse:
@@ -140,7 +151,7 @@ def main() -> None:
 
     settings = get_settings()
     uvicorn.run(
-        "opencode_adapter_app.main:app",
+        "claude_code_adapter_app.main:app",
         host=settings.host,
         port=settings.port,
         reload=False,

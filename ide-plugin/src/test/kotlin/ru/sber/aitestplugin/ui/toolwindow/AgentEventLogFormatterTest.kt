@@ -13,9 +13,9 @@ class AgentEventLogFormatterTest {
         val now = Instant.parse("2026-03-05T10:00:00Z")
         val events = listOf(
             ChatEventDto("message.received", emptyMap(), now.minusSeconds(2), -1),
-            ChatEventDto("opencode.run.started", emptyMap(), now, 0),
-            ChatEventDto("opencode.run.progress", mapOf("currentAction" to "Scanning files"), now.plusSeconds(1), 1),
-            ChatEventDto("opencode.run.artifact_published", mapOf("artifact" to mapOf("name" to "session-diff.json")), now.plusSeconds(2), 2),
+            ChatEventDto("run.started", emptyMap(), now, 0),
+            ChatEventDto("run.progress", mapOf("currentAction" to "Scanning files"), now.plusSeconds(1), 1),
+            ChatEventDto("run.artifact_published", mapOf("artifact" to mapOf("name" to "session-diff.json")), now.plusSeconds(2), 2),
             ChatEventDto("command.executed", mapOf("command" to "diff"), now.plusSeconds(3), 3),
             ChatEventDto("permission.requested", emptyMap(), now.plusSeconds(4), 4),
             ChatEventDto("run.succeeded", emptyMap(), now.plusSeconds(5), 5),
@@ -39,8 +39,8 @@ class AgentEventLogFormatterTest {
     fun `buildAgentEventLines compacts repeated events`() {
         val now = Instant.parse("2026-03-05T10:00:00Z")
         val events = listOf(
-            ChatEventDto("opencode.run.progress", mapOf("currentAction" to "Reading project"), now, 0),
-            ChatEventDto("opencode.run.progress", mapOf("currentAction" to "Reading project"), now.plusSeconds(1), 1),
+            ChatEventDto("run.progress", mapOf("currentAction" to "Reading project"), now, 0),
+            ChatEventDto("run.progress", mapOf("currentAction" to "Reading project"), now.plusSeconds(1), 1),
         )
 
         val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
@@ -132,7 +132,7 @@ class AgentEventLogFormatterTest {
         val now = Instant.parse("2026-03-05T10:00:00Z")
         val events = listOf(
             ChatEventDto(
-                "opencode.run.progress",
+                "run.progress",
                 mapOf(
                     "payload" to mapOf(
                         "type" to "message.part.updated",

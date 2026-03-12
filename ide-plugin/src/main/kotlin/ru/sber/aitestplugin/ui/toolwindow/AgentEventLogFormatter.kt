@@ -107,29 +107,31 @@ internal object AgentEventLogFormatter {
         return when (normalized) {
             "heartbeat" -> null
             "message.received",
-            "opencode.run_created",
-            "opencode.run.queued",
-            "opencode.run.started",
-            "opencode.run.finished",
+            "run.created",
             "run.started",
             "run.queued",
-            "run.finished",
             "run.succeeded" -> null
-            "opencode.run.retrying", "run.retrying" ->
+            "run.retrying" ->
                 compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Retrying", event)
-            "opencode.run.awaiting_approval", "permission.requested" ->
+            "run.awaiting_approval", "permission.requested" ->
                 compact(EventCategory.APPROVAL, "Approval required", event)
             "approval.decision", "permission.approved", "permission.rejected" ->
                 compact(EventCategory.APPROVAL, "Approval decision sent", event)
-            "opencode.run.artifact_published" ->
+            "run.artifact_published" ->
                 compact(EventCategory.CHANGE, artifactMessage(event.payload), event)
-            "command.executed", "opencode.command.executed" ->
+            "session.compact.started" ->
+                compact(EventCategory.COMMAND, "Compacting session", event)
+            "session.compact.succeeded" ->
+                compact(EventCategory.COMMAND, "Session compacted", event)
+            "session.compact.failed" ->
+                compact(EventCategory.STATUS, if (detail.isNotBlank()) "Compaction failed: $detail" else "Compaction failed", event)
+            "command.executed" ->
                 compact(EventCategory.COMMAND, commandMessage(event.payload), event)
-            "opencode.run.progress", "run.progress" ->
+            "run.progress" ->
                 compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Working", event)
-            "opencode.run.failed", "run.failed" ->
+            "run.failed" ->
                 compact(EventCategory.STATUS, if (detail.isNotBlank()) "Failed: $detail" else "Failed", event)
-            "run.cancelled", "opencode.run.cancelled" ->
+            "run.cancelled" ->
                 compact(EventCategory.STATUS, "Cancelled", event)
             else -> null
         }

@@ -126,37 +126,37 @@ class Settings(BaseSettings):
         default=None,
         description="Base URL of remote tool host service when tool_host_mode=remote",
     )
-    opencode_backend_mode: str = Field(
+    agent_backend_mode: str = Field(
         default="disabled",
-        description="OpenCode backend mode: disabled|http",
+        description="Delegated agent backend mode: disabled|http",
     )
-    opencode_adapter_url: str | None = Field(
+    agent_adapter_url: str | None = Field(
         default=None,
-        description="Base URL of the OpenCode adapter API when opencode_backend_mode=http",
+        description="Base URL of the Claude Code adapter API when agent_backend_mode=http",
     )
-    opencode_request_timeout_s: float = Field(
+    agent_request_timeout_s: float = Field(
         default=30.0,
-        description="Timeout for OpenCode adapter requests in seconds",
+        description="Timeout for delegated agent adapter requests in seconds",
     )
-    opencode_poll_interval_ms: int = Field(
+    agent_poll_interval_ms: int = Field(
         default=1_000,
-        description="Polling interval for OpenCode delegated runs",
+        description="Polling interval for delegated agent runs",
     )
-    opencode_max_poll_interval_ms: int = Field(
+    agent_max_poll_interval_ms: int = Field(
         default=5_000,
-        description="Maximum polling interval for OpenCode delegated runs",
+        description="Maximum polling interval for delegated agent runs",
     )
-    opencode_event_page_size: int = Field(
+    agent_event_page_size: int = Field(
         default=200,
-        description="Suggested page size for OpenCode adapter event sync",
+        description="Suggested page size for delegated agent adapter event sync",
     )
-    opencode_runtime_name: str = Field(
-        default="opencode",
+    agent_runtime_name: str = Field(
+        default="agent",
         description="Runtime name exposed to clients for delegated agent sessions",
     )
-    opencode_default_profile: str = Field(
+    agent_default_profile: str = Field(
         default="agent",
-        description="Default profile used for OpenCode delegated sessions",
+        description="Default profile used for delegated agent sessions",
     )
     jira_source_mode: str = Field(
         default="stub",
@@ -371,22 +371,22 @@ class Settings(BaseSettings):
             raise ValueError("tool_host_mode must be one of: local, remote")
         if self.tool_host_mode == "remote" and not (self.tool_host_url or "").strip():
             raise ValueError("tool_host_url is required when tool_host_mode=remote")
-        if self.opencode_backend_mode not in {"disabled", "http"}:
-            raise ValueError("opencode_backend_mode must be one of: disabled, http")
-        if self.opencode_backend_mode == "http" and not (self.opencode_adapter_url or "").strip():
-            raise ValueError("opencode_adapter_url is required when opencode_backend_mode=http")
-        if self.opencode_request_timeout_s <= 0:
-            raise ValueError("opencode_request_timeout_s must be > 0")
-        if self.opencode_poll_interval_ms < 100:
-            raise ValueError("opencode_poll_interval_ms must be >= 100")
-        if self.opencode_max_poll_interval_ms < self.opencode_poll_interval_ms:
-            raise ValueError("opencode_max_poll_interval_ms must be >= opencode_poll_interval_ms")
-        if self.opencode_event_page_size < 1:
-            raise ValueError("opencode_event_page_size must be >= 1")
-        if not self.opencode_runtime_name.strip():
-            raise ValueError("opencode_runtime_name must not be empty")
-        if not self.opencode_default_profile.strip():
-            raise ValueError("opencode_default_profile must not be empty")
+        if self.agent_backend_mode not in {"disabled", "http"}:
+            raise ValueError("agent_backend_mode must be one of: disabled, http")
+        if self.agent_backend_mode == "http" and not (self.agent_adapter_url or "").strip():
+            raise ValueError("agent_adapter_url is required when agent_backend_mode=http")
+        if self.agent_request_timeout_s <= 0:
+            raise ValueError("agent_request_timeout_s must be > 0")
+        if self.agent_poll_interval_ms < 100:
+            raise ValueError("agent_poll_interval_ms must be >= 100")
+        if self.agent_max_poll_interval_ms < self.agent_poll_interval_ms:
+            raise ValueError("agent_max_poll_interval_ms must be >= agent_poll_interval_ms")
+        if self.agent_event_page_size < 1:
+            raise ValueError("agent_event_page_size must be >= 1")
+        if not self.agent_runtime_name.strip():
+            raise ValueError("agent_runtime_name must not be empty")
+        if not self.agent_default_profile.strip():
+            raise ValueError("agent_default_profile must not be empty")
 
         if not self.corp_mode:
             return self

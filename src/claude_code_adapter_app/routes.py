@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
-from opencode_adapter_app.schemas import (
+from claude_code_adapter_app.schemas import (
     AdapterApprovalDecisionRequest,
     AdapterApprovalDecisionResponse,
     AdapterRunCancelResponse,
@@ -18,13 +18,13 @@ from opencode_adapter_app.schemas import (
 )
 
 
-router = APIRouter(tags=["opencode-adapter"])
-runs_router = APIRouter(prefix="/v1/runs", tags=["opencode-adapter"])
-sessions_router = APIRouter(prefix="/v1/sessions", tags=["opencode-adapter"])
+router = APIRouter(tags=["claude-code-adapter"])
+runs_router = APIRouter(prefix="/v1/runs", tags=["claude-code-adapter"])
+sessions_router = APIRouter(prefix="/v1/sessions", tags=["claude-code-adapter"])
 
 
 def _service(request: Request):
-    return request.app.state.opencode_adapter_service
+    return request.app.state.claude_code_adapter_service
 
 
 @runs_router.post("", response_model=AdapterRunCreateResponse)
@@ -96,3 +96,4 @@ async def execute_session_command(
 
 router.include_router(runs_router)
 router.include_router(sessions_router)
+

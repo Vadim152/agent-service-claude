@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
@@ -50,10 +50,11 @@ def classify_event(payload: dict[str, Any]) -> str:
         return "run.artifact_published"
     if raw_type in {"run.started", "started"}:
         return "run.started"
-    if raw_type in {"run.finished", "finished"} or status == "succeeded":
-        return "run.finished"
+    if raw_type in {"run.finished", "finished", "run.succeeded"} or status == "succeeded":
+        return "run.succeeded"
     if raw_type in {"run.cancelled", "cancelled"} or status == "cancelled":
         return "run.cancelled"
     if raw_type in {"run.failed", "failed", "error"} or status == "failed":
         return "run.failed"
     return "run.progress"
+

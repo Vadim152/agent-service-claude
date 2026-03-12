@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import logging
@@ -8,22 +8,22 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
-from opencode_adapter_app.config import AdapterSettings
-from opencode_adapter_app.event_parser import TERMINAL_STATUSES, classify_event, normalize_status, parse_json_line
-from opencode_adapter_app.headless_server import OpenCodeHeadlessServer, OpenCodeServerError
-from opencode_adapter_app.state_store import OpenCodeAdapterStateStore, utcnow
+from claude_code_adapter_app.config import AdapterSettings
+from claude_code_adapter_app.event_parser import TERMINAL_STATUSES, classify_event, normalize_status, parse_json_line
+from claude_code_adapter_app.headless_server import ClaudeCodeHeadlessServer, ClaudeCodeServerError
+from claude_code_adapter_app.state_store import ClaudeCodeAdapterStateStore, utcnow
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-class OpenCodeProcessSupervisor:
+class ClaudeCodeProcessSupervisor:
     def __init__(
         self,
         *,
         settings: AdapterSettings,
-        state_store: OpenCodeAdapterStateStore,
-        headless_server: OpenCodeHeadlessServer,
+        state_store: ClaudeCodeAdapterStateStore,
+        headless_server: ClaudeCodeHeadlessServer,
     ) -> None:
         self._settings = settings
         self._state_store = state_store
@@ -33,7 +33,7 @@ class OpenCodeProcessSupervisor:
         self._run_stops: dict[str, threading.Event] = {}
 
     def start_run(self, run: dict[str, Any]) -> None:
-        worker = threading.Thread(target=self._run_process, args=(dict(run),), daemon=True, name=f"opencode-{run['backend_run_id']}")
+        worker = threading.Thread(target=self._run_process, args=(dict(run),), daemon=True, name=f"claude-code-{run['backend_run_id']}")
         worker.start()
 
     def cancel_run(self, backend_run_id: str) -> dict[str, Any]:
@@ -55,8 +55,8 @@ class OpenCodeProcessSupervisor:
                         params={"directory": run.get("project_root")},
                         timeout_s=10.0,
                     )
-                except OpenCodeServerError as exc:
-                    LOGGER.warning("Failed to abort OpenCode session %s: %s", session_id, exc)
+                except ClaudeCodeServerError as exc:
+                    LOGGER.warning("Failed to abort Claude Code session %s: %s", session_id, exc)
             stop_event = self._run_stops.get(backend_run_id)
             if stop_event is not None:
                 stop_event.set()
@@ -82,8 +82,8 @@ class OpenCodeProcessSupervisor:
                 json_payload={"response": reply},
                 timeout_s=10.0,
             )
-        except OpenCodeServerError as exc:
-            LOGGER.warning("Failed to reply to OpenCode approval %s: %s", approval_id, exc)
+        except ClaudeCodeServerError as exc:
+            LOGGER.warning("Failed to reply to Claude Code approval %s: %s", approval_id, exc)
         remaining = [
             item
             for item in current.get("pending_approvals") or []
@@ -184,7 +184,7 @@ class OpenCodeProcessSupervisor:
                 target=self._consume_server_events,
                 args=(run, session_id, events_handle, artifacts_dir, stop_event),
                 daemon=True,
-                name=f"opencode-events-{backend_run_id}",
+                name=f"claude-code-events-{backend_run_id}",
             )
             listener.start()
 
@@ -281,7 +281,7 @@ class OpenCodeProcessSupervisor:
         )
         session_id = str(payload.get("id") or "").strip()
         if not session_id:
-            raise OpenCodeServerError("OpenCode server did not return a session id")
+            raise ClaudeCodeServerError("Claude Code server did not return a session id")
         external_session_id = str(run.get("external_session_id") or "").strip()
         if external_session_id:
             self._state_store.set_session_mapping(
@@ -299,9 +299,9 @@ class OpenCodeProcessSupervisor:
         }
         model_override = self._settings.resolve_forced_model()
         if model_override:
-            LOGGER.info("Forcing OpenCode model for %s: %s", run["backend_run_id"], model_override)
+            LOGGER.info("Forcing Claude Code model for %s: %s", run["backend_run_id"], model_override)
         else:
-            LOGGER.info("Using OpenCode config-managed model for %s", run["backend_run_id"])
+            LOGGER.info("Using Claude Code config-managed model for %s", run["backend_run_id"])
         model = self._parse_model(model_override)
         if model is not None:
             payload["model"] = model
@@ -333,8 +333,8 @@ class OpenCodeProcessSupervisor:
                 self._apply_server_event(backend_run_id, session_id, payload, events_handle, artifacts_dir)
                 if stop_event.is_set():
                     return
-        except OpenCodeServerError as exc:
-            LOGGER.warning("OpenCode event stream failed for %s: %s", backend_run_id, exc)
+        except ClaudeCodeServerError as exc:
+            LOGGER.warning("Claude Code event stream failed for %s: %s", backend_run_id, exc)
 
     def _apply_server_event(
         self,
@@ -359,7 +359,7 @@ class OpenCodeProcessSupervisor:
             status = ((payload.get("properties") or {}).get("status") or {}).get("type")
             detail = _status_detail_from_event(payload)
             if status == "busy":
-                patches["current_action"] = detail or "OpenCode is running"
+                patches["current_action"] = detail or "Claude Code is running"
             elif status == "retry":
                 patches["current_action"] = detail or "Retrying"
             elif status == "idle":
@@ -374,7 +374,7 @@ class OpenCodeProcessSupervisor:
         elif event_type == "message.updated":
             info = (payload.get("properties") or {}).get("info") or {}
             if info.get("role") == "assistant" and info.get("error"):
-                error_message = _extract_error_message(info.get("error")) or "OpenCode failed"
+                error_message = _extract_error_message(info.get("error")) or "Claude Code failed"
                 patches.update(
                     {
                         "status": "failed",
@@ -427,7 +427,7 @@ class OpenCodeProcessSupervisor:
             canonical_event = "run.artifact_published"
             event_payload["artifact"] = artifact
         elif event_type == "session.error":
-            error = _extract_error_message((payload.get("properties") or {}).get("error")) or "OpenCode session error"
+            error = _extract_error_message((payload.get("properties") or {}).get("error")) or "Claude Code session error"
             patches.update(
                 {
                     "status": "failed",
@@ -457,7 +457,7 @@ class OpenCodeProcessSupervisor:
             return
         response_error = _extract_response_error(response)
         if response_error is not None:
-            error_message = _extract_error_message(response_error) or "OpenCode failed"
+            error_message = _extract_error_message(response_error) or "Claude Code failed"
             self._state_store.patch_run(
                 backend_run_id,
                 status="failed",
@@ -510,7 +510,7 @@ class OpenCodeProcessSupervisor:
         )
         self._state_store.append_event(
             backend_run_id,
-            "run.finished",
+            "run.succeeded",
             {"backendRunId": backend_run_id, "backendSessionId": session_id, "output": result},
         )
 
@@ -570,7 +570,7 @@ class OpenCodeProcessSupervisor:
         meta_path.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
 
         command = self._build_raw_command(run)
-        env = self._settings.build_child_env()
+        env = self._settings.build_child_env(project_root=str(run["project_root"]))
         try:
             process = subprocess.Popen(
                 command,
@@ -732,7 +732,7 @@ class OpenCodeProcessSupervisor:
             event_type = "run.awaiting_approval"
         elif event_type != "run.awaiting_approval":
             patches["pending_approvals"] = []
-            if status != "queued" and event_type not in {"run.finished", "run.failed", "run.cancelled"}:
+            if status != "queued" and event_type not in {"run.succeeded", "run.failed", "run.cancelled"}:
                 patches["status"] = status
 
         result = payload.get("result") or payload.get("output")
@@ -771,7 +771,7 @@ class OpenCodeProcessSupervisor:
         events_handle.write(json.dumps(stored_event, ensure_ascii=False) + "\n")
         events_handle.flush()
 
-        if event_type in {"run.finished", "run.failed", "run.cancelled"}:
+        if event_type in {"run.succeeded", "run.failed", "run.cancelled"}:
             # Terminal raw events can arrive before stderr/result artifacts are fully flushed.
             # Final status transition is owned by _finalize_raw_run after process teardown.
             self._state_store.patch_run(
@@ -828,7 +828,7 @@ class OpenCodeProcessSupervisor:
             action = "Cancelled"
         elif exit_code == 0:
             status = "succeeded"
-            event_type = "run.finished"
+            event_type = "run.succeeded"
             action = "Completed"
         else:
             status = "failed"
@@ -925,9 +925,9 @@ def _extract_approvals(payload: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "approvalId": approval_id,
                 "approval_id": approval_id,
-                "toolName": str(item.get("toolName") or item.get("tool") or "opencode.tool"),
-                "tool_name": str(item.get("toolName") or item.get("tool") or "opencode.tool"),
-                "title": str(item.get("title") or item.get("toolName") or "OpenCode approval"),
+                "toolName": str(item.get("toolName") or item.get("tool") or "agent.tool"),
+                "tool_name": str(item.get("toolName") or item.get("tool") or "agent.tool"),
+                "title": str(item.get("title") or item.get("toolName") or "Agent approval"),
                 "kind": str(item.get("kind") or "tool"),
                 "riskLevel": str(item.get("riskLevel") or "high"),
                 "risk_level": str(item.get("riskLevel") or "high"),
@@ -959,7 +959,7 @@ def _event_session_id(payload: dict[str, Any]) -> str | None:
 
 def _approval_from_permission(properties: dict[str, Any]) -> dict[str, Any]:
     approval_id = str(properties.get("id") or "")
-    permission = str(properties.get("permission") or "opencode.permission")
+    permission = str(properties.get("permission") or "agent.permission")
     return {
         "approvalId": approval_id,
         "approval_id": approval_id,
@@ -1245,3 +1245,4 @@ def _extract_text_output(response: Any) -> str:
             if text:
                 chunks.append(text)
     return "\n".join(chunks).strip()
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sqlite3
@@ -30,7 +30,7 @@ def _json_loads(value: str | bytes | None, *, default: Any) -> Any:
         return deepcopy(default)
 
 
-class OpenCodeAdapterStateStore:
+class ClaudeCodeAdapterStateStore:
     def __init__(
         self,
         *,
@@ -57,7 +57,7 @@ class OpenCodeAdapterStateStore:
         self._prune_expired_state_locked()
 
     @classmethod
-    def from_settings(cls, settings: Any) -> "OpenCodeAdapterStateStore":
+    def from_settings(cls, settings: Any) -> "ClaudeCodeAdapterStateStore":
         return cls(
             max_events_per_run=int(settings.max_events_per_run),
             backend=str(settings.state_backend),
@@ -667,7 +667,7 @@ class OpenCodeAdapterStateStore:
 
 def _normalize_approval(item: dict[str, Any]) -> dict[str, Any]:
     approval_id = str(item.get("approvalId") or item.get("approval_id") or item.get("id") or "").strip()
-    tool_name = str(item.get("toolName") or item.get("tool_name") or item.get("tool") or "opencode.tool").strip()
+    tool_name = str(item.get("toolName") or item.get("tool_name") or item.get("tool") or "agent.tool").strip()
     risk_level = str(item.get("riskLevel") or item.get("risk_level") or "high").strip() or "high"
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     return {
@@ -675,9 +675,10 @@ def _normalize_approval(item: dict[str, Any]) -> dict[str, Any]:
         "approval_id": approval_id,
         "toolName": tool_name,
         "tool_name": tool_name,
-        "title": str(item.get("title") or tool_name or "OpenCode approval"),
+        "title": str(item.get("title") or tool_name or "Agent approval"),
         "kind": str(item.get("kind") or "tool"),
         "riskLevel": risk_level,
         "risk_level": risk_level,
         "metadata": deepcopy(metadata),
     }
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
@@ -143,7 +143,7 @@ class AdapterSessionCommandResponse(ApiBaseModel):
 
 
 class AdapterDebugRuntimeResponse(ApiBaseModel):
-    service: str = "opencode-adapter"
+    service: str = "claude-code-adapter"
     runner_type: str = Field(..., alias="runnerType")
     resolution_mode: str = Field(..., alias="modelResolution")
     forced_model: str | None = Field(default=None, alias="forcedModel")
@@ -157,3 +157,4 @@ class AdapterDebugRuntimeResponse(ApiBaseModel):
     resolved_model: str | None = Field(default=None, alias="resolvedModel")
     raw_config: dict[str, Any] | None = Field(default=None, alias="rawConfig")
     config_error: str | None = Field(default=None, alias="configError")
+

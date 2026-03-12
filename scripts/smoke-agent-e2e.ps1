@@ -26,7 +26,7 @@ $session = Invoke-Json -Method POST -Url "$baseUrl/sessions" -Body @{
     projectRoot = $ProjectRoot
     source = "smoke-test"
     profile = "agent"
-    runtime = "opencode"
+    runtime = "agent"
     reuseExisting = $true
 }
 
@@ -49,7 +49,7 @@ if ($null -eq $status) {
     throw "Failed to read session status"
 }
 if ($status.activeRunStatus -notin @("succeeded", "failed", "cancelled")) {
-    throw "OpenCode run did not finish within timeout. Last status: $($status.activeRunStatus), activity: $($status.activity), action: $($status.currentAction)"
+    throw "Agent run did not finish within timeout. Last status: $($status.activeRunStatus), activity: $($status.activity), action: $($status.currentAction)"
 }
 
 $history = Invoke-Json -Method GET -Url "$baseUrl/sessions/$($session.sessionId)/history"

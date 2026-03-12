@@ -19,7 +19,7 @@ load_dotenv(ENV_PATH, override=False)
 
 class AdapterSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="OPENCODE_ADAPTER_",
+        env_prefix="CLAUDE_CODE_ADAPTER_",
         env_file=ENV_PATH,
         case_sensitive=False,
         extra="ignore",
@@ -31,9 +31,9 @@ class AdapterSettings(BaseSettings):
     port: int = Field(default=8011)
     log_level: str = Field(default="INFO")
 
-    binary: str = Field(default="opencode.cmd")
+    binary: str = Field(default="claude")
     binary_args_json: str | None = Field(default=None)
-    runner_type: str = Field(default="opencode")
+    runner_type: str = Field(default="raw_json_runner")
     default_agent: str = Field(default="agent")
     model_mode: str = Field(default="config")
     model_override: str | None = Field(default=None)
@@ -41,7 +41,7 @@ class AdapterSettings(BaseSettings):
     server_host: str = Field(default="127.0.0.1")
     server_port: int = Field(default=4096)
     print_logs: bool = Field(default=False)
-    work_root: Path = Field(default=ROOT_DIR / ".agent" / "opencode-adapter")
+    work_root: Path = Field(default=ROOT_DIR / ".agent" / "claude-code-adapter")
     state_backend: str = Field(default="sqlite")
     state_file: Path | None = Field(default=None)
     session_retention_hours: int = Field(default=720)
@@ -85,8 +85,8 @@ class AdapterSettings(BaseSettings):
         if self.log_level not in {"DEBUG", "INFO", "WARN", "ERROR"}:
             raise ValueError("log_level must be one of: DEBUG, INFO, WARN, ERROR")
         self.runner_type = self.runner_type.strip().lower()
-        if self.runner_type not in {"opencode", "raw_json_runner"}:
-            raise ValueError("runner_type must be one of: opencode, raw_json_runner")
+        if self.runner_type not in {"claude_code", "raw_json_runner"}:
+            raise ValueError("runner_type must be one of: claude_code, raw_json_runner")
         self.model_mode = self.model_mode.strip().lower()
         if self.model_mode not in {"config", "override"}:
             raise ValueError("model_mode must be one of: config, override")
@@ -179,8 +179,8 @@ class AdapterSettings(BaseSettings):
             "AZURE_OPENAI_ENDPOINT",
             "LITELLM_API_KEY",
             "PORTKEY_API_KEY",
-            "OPENCODE_CONFIG_DIR",
-            "OPENCODE_CONFIG",
+            "CLAUDE_CODE_CONFIG_DIR",
+            "CLAUDE_CODE_CONFIG",
         ]
 
     @property
@@ -222,39 +222,39 @@ class AdapterSettings(BaseSettings):
                 if value is not None:
                     env[key] = value
         env.update(self.xdg_env())
-        resolved_config_file = config_file or self.resolve_opencode_config_file(project_root)
-        resolved_config_dir = config_dir or self.resolve_opencode_config_dir(project_root)
+        resolved_config_file = config_file or self.resolve_claude_code_config_file(project_root)
+        resolved_config_dir = config_dir or self.resolve_claude_code_config_dir(project_root)
         if resolved_config_file:
-            env["OPENCODE_CONFIG"] = resolved_config_file
-        elif "OPENCODE_CONFIG" in env:
-            env.pop("OPENCODE_CONFIG", None)
+            env["CLAUDE_CODE_CONFIG"] = resolved_config_file
+        else:
+            env.pop("CLAUDE_CODE_CONFIG", None)
         if resolved_config_dir:
-            env["OPENCODE_CONFIG_DIR"] = resolved_config_dir
-        elif "OPENCODE_CONFIG_DIR" in env:
-            env.pop("OPENCODE_CONFIG_DIR", None)
+            env["CLAUDE_CODE_CONFIG_DIR"] = resolved_config_dir
+        else:
+            env.pop("CLAUDE_CODE_CONFIG_DIR", None)
         return env
 
-    def resolve_opencode_config_file(self, project_root: str | Path | None = None) -> str | None:
+    def resolve_claude_code_config_file(self, project_root: str | Path | None = None) -> str | None:
         if self.config_file:
             return self.config_file
         if project_root is None:
             return None
         root = Path(project_root)
         candidates = [
-            root / "opencode.json",
-            root / ".opencode" / "opencode.json",
+            root / "claude-code.json",
+            root / ".claude-code" / "claude-code.json",
         ]
         for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
         return None
 
-    def resolve_opencode_config_dir(self, project_root: str | Path | None = None) -> str | None:
+    def resolve_claude_code_config_dir(self, project_root: str | Path | None = None) -> str | None:
         if self.config_dir:
             return self.config_dir
         if project_root is None:
             return None
-        candidate = Path(project_root) / ".opencode"
+        candidate = Path(project_root) / ".claude-code"
         if candidate.is_dir():
             return str(candidate)
         return None
@@ -269,9 +269,9 @@ class AdapterSettings(BaseSettings):
     def model_resolution_description(self) -> str:
         forced = self.resolve_forced_model()
         if forced:
-            source = "OPENCODE_ADAPTER_MODEL_OVERRIDE"
+            source = "CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE"
             if not self.model_override and self.default_model:
-                source = "OPENCODE_ADAPTER_DEFAULT_MODEL"
+                source = "CLAUDE_CODE_ADAPTER_DEFAULT_MODEL"
             return f"override ({forced}) via {source}"
         return "config"
 
@@ -299,8 +299,8 @@ def get_settings() -> AdapterSettings:
     settings = AdapterSettings()
     if settings.default_model and not settings.model_override:
         warnings.warn(
-            "OPENCODE_ADAPTER_DEFAULT_MODEL is deprecated; use "
-            "OPENCODE_ADAPTER_MODEL_MODE=override with OPENCODE_ADAPTER_MODEL_OVERRIDE instead.",
+            "CLAUDE_CODE_ADAPTER_DEFAULT_MODEL is deprecated; use "
+            "CLAUDE_CODE_ADAPTER_MODEL_MODE=override with CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE instead.",
             DeprecationWarning,
             stacklevel=2,
         )

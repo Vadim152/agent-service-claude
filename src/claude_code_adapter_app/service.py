@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import itertools
 import os
@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from opencode_adapter_app.errors import AdapterApiError
-from opencode_adapter_app.schemas import (
+from claude_code_adapter_app.errors import AdapterApiError
+from claude_code_adapter_app.schemas import (
     AdapterApprovalDecisionRequest,
     AdapterApprovalDecisionResponse,
     AdapterApprovalStatusDto,
@@ -23,18 +23,18 @@ from opencode_adapter_app.schemas import (
     AdapterSessionDto,
     AdapterSessionEnsureRequest,
 )
-from opencode_adapter_app.state_store import OpenCodeAdapterStateStore, utcnow
+from claude_code_adapter_app.state_store import ClaudeCodeAdapterStateStore, utcnow
 
 
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled"}
 
 
-class OpenCodeAdapterService:
+class ClaudeCodeAdapterService:
     def __init__(
         self,
         *,
         settings: Any,
-        state_store: OpenCodeAdapterStateStore,
+        state_store: ClaudeCodeAdapterStateStore,
         process_supervisor: Any,
     ) -> None:
         self._settings = settings
@@ -78,7 +78,7 @@ class OpenCodeAdapterService:
             if not backend_session_id:
                 raise AdapterApiError(
                     "backend_unavailable",
-                    "OpenCode did not return a backend session id.",
+                    "Claude Code did not return a backend session id.",
                     status_code=503,
                     retryable=True,
                 )
@@ -123,7 +123,7 @@ class OpenCodeAdapterService:
             )
             backend_session_id = str(session_mapping.backend_session_id or "").strip() or backend_session_id
 
-        backend_run_id = f"oc-adapter-{next(self._id_counter)}"
+        backend_run_id = f"claude-code-adapter-{next(self._id_counter)}"
         now = utcnow().isoformat()
         run = {
             "backend_run_id": backend_run_id,
@@ -317,13 +317,16 @@ class OpenCodeAdapterService:
             mapping.get("last_provider_id"),
             mapping.get("last_model_id"),
         )
-        if self._settings.runner_type != "raw_json_runner":
+        if self._settings.runner_type == "claude_code":
             self._process_supervisor.compact_session(
                 project_root=str(mapping.get("project_root") or ""),
                 backend_session_id=backend_session_id,
                 provider_id=provider_id,
                 model_id=model_id,
             )
+            compact_status = "completed"
+        else:
+            compact_status = "noop"
         updated = self._state_store.upsert_session_mapping(
             external_session_id,
             status="idle",
@@ -338,7 +341,7 @@ class OpenCodeAdapterService:
             command="compact",
             accepted=True,
             result={
-                "status": "completed",
+                "status": compact_status,
                 "backendSessionId": backend_session_id,
                 "providerId": provider_id,
                 "modelId": model_id,
@@ -350,7 +353,7 @@ class OpenCodeAdapterService:
         mapping = self._require_session_mapping(external_session_id)
         cached = self._state_store.get_session_diff(external_session_id)
         backend_session_id = str(mapping.get("backend_session_id") or "").strip()
-        if self._settings.runner_type != "raw_json_runner" and backend_session_id:
+        if self._settings.runner_type == "claude_code" and backend_session_id:
             try:
                 live_diff = self._process_supervisor.fetch_session_diff(
                     project_root=str(mapping.get("project_root") or ""),
@@ -498,8 +501,8 @@ class OpenCodeAdapterService:
         return [
             AdapterApprovalStatusDto(
                 approvalId=str(item.get("approvalId") or item.get("approval_id") or ""),
-                toolName=str(item.get("toolName") or item.get("tool_name") or "opencode.tool"),
-                title=str(item.get("title") or item.get("toolName") or "OpenCode approval"),
+                toolName=str(item.get("toolName") or item.get("tool_name") or "agent.tool"),
+                title=str(item.get("title") or item.get("toolName") or "Agent approval"),
                 kind=str(item.get("kind") or "tool"),
                 riskLevel=str(item.get("riskLevel") or item.get("risk_level") or "high"),
                 metadata=dict(item.get("metadata") or {}),
@@ -579,3 +582,4 @@ def _normalize_diff_files(files: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
+

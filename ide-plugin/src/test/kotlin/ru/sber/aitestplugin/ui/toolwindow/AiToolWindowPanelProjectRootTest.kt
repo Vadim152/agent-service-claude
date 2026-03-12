@@ -6,9 +6,9 @@ import org.junit.Test
 class AiToolWindowPanelProjectRootTest {
 
     @Test
-    fun `opencode runtime uses ide base path`() {
+    fun `agent runtime uses ide base path`() {
         val result = resolveRuntimeProjectRootValue(
-            runtime = "opencode",
+            runtime = "agent",
             projectBasePath = "C:/repo/current-project"
         )
 
@@ -28,7 +28,7 @@ class AiToolWindowPanelProjectRootTest {
     @Test
     fun `returns empty when ide base path is missing`() {
         val result = resolveRuntimeProjectRootValue(
-            runtime = "opencode",
+            runtime = "agent",
             projectBasePath = null
         )
 
@@ -36,7 +36,7 @@ class AiToolWindowPanelProjectRootTest {
     }
 
     @Test
-    fun `status line includes opencode context and tokens`() {
+    fun `status line includes agent context and tokens`() {
         val result = buildStatusLabelText(
             runtimeText = "Agent",
             activityText = "Готов",
@@ -50,7 +50,7 @@ class AiToolWindowPanelProjectRootTest {
     }
 
     @Test
-    fun `status line skips opencode metrics for non agent`() {
+    fun `status line skips agent metrics for non agent`() {
         val result = buildStatusLabelText(
             runtimeText = "Chat",
             activityText = "Готов",
@@ -76,7 +76,7 @@ class AiToolWindowPanelProjectRootTest {
 
     @Test
     fun `cli token total uses input output and reasoning only`() {
-        val result = opencodeCliTokenTotal(
+        val result = agentTokenTotal(
             input = 120,
             output = 80,
             reasoning = 40

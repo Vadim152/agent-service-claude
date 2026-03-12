@@ -22,14 +22,14 @@ $healthUrl = "http://$HostAddress`:$Port/health"
 try {
     $existing = Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 2
     if ($existing.StatusCode -eq 200) {
-        Write-Output "OpenCode adapter is already running at $healthUrl"
+        Write-Output "Claude Code adapter is already running at $healthUrl"
         exit 0
     }
 }
 catch {
 }
 
-$logDir = Join-Path $repoRoot ".agent\opencode-adapter"
+$logDir = Join-Path $repoRoot ".agent\claude-code-adapter"
 New-Item -ItemType Directory -Force $logDir | Out-Null
 $stdoutLog = Join-Path $logDir "adapter.stdout.log"
 $stderrLog = Join-Path $logDir "adapter.stderr.log"
@@ -43,7 +43,7 @@ foreach ($logFile in @($stdoutLog, $stderrLog)) {
 $env:PYTHONPATH = "src"
 $process = Start-Process `
     -FilePath $python `
-    -ArgumentList "-m", "opencode_adapter_app.main" `
+    -ArgumentList "-m", "claude_code_adapter_app.main" `
     -WorkingDirectory $repoRoot `
     -PassThru `
     -WindowStyle Hidden `
@@ -58,7 +58,7 @@ while ((Get-Date) -lt $deadline) {
     try {
         $response = Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 2
         if ($response.StatusCode -eq 200) {
-            Write-Output "OpenCode adapter started on $healthUrl (PID $($process.Id))"
+            Write-Output "Claude Code adapter started on $healthUrl (PID $($process.Id))"
             exit 0
         }
     }
@@ -69,4 +69,4 @@ while ((Get-Date) -lt $deadline) {
 if (Test-Path $stderrLog) {
     Get-Content $stderrLog | Select-Object -Last 40 | Write-Output
 }
-throw "OpenCode adapter did not become ready at $healthUrl"
+throw "Claude Code adapter did not become ready at $healthUrl"

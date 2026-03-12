@@ -1,0 +1,2 @@
+﻿"""ClaudeCode adapter application package."""
+

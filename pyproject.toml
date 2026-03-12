@@ -24,8 +24,8 @@ dependencies = [
 agent-service = "app.main:main"
 agent-service-worker = "app.worker:main"
 agent-service-tool-host = "app.tool_host:main"
-opencode-adapter = "opencode_adapter_app.main:main"
-agent-service-opencode-adapter = "opencode_adapter_app.main:main"
+claude-code-adapter = "claude_code_adapter_app.main:main"
+agent-service-claude-code-adapter = "claude_code_adapter_app.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

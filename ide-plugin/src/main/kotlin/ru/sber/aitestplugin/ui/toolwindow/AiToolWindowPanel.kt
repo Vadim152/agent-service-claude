@@ -626,7 +626,7 @@ class AiToolWindowPanel(
                     source = UiLineSource.SERVER_MESSAGE
                 )
             }
-        val eventTraceLines = if (history.runtime.equals("opencode", ignoreCase = true)) {
+        val eventTraceLines = if (history.runtime.equals("agent", ignoreCase = true)) {
             AgentEventLogFormatter.buildAgentEventLines(history.events, maxTraceLines)
                 .map { event ->
                     UiLine(
@@ -643,7 +643,7 @@ class AiToolWindowPanel(
 
         val localLines = timelineLines.filter { it.source == UiLineSource.LOCAL_SYSTEM }
         val progressLine = timelineLines.firstOrNull { it.source == UiLineSource.PROGRESS }
-        val mergedServerTimeline = if (history.runtime.equals("opencode", ignoreCase = true)) {
+        val mergedServerTimeline = if (history.runtime.equals("agent", ignoreCase = true)) {
             AgentEventLogFormatter.mergeConversationAndEvents(
                 messages = serverLines.map { line ->
                     AgentEventLogFormatter.TimelineItem(
@@ -710,7 +710,7 @@ class AiToolWindowPanel(
                 used = status.limits.used,
                 contextWindow = status.limits.contextWindow
             )
-            latestTokenTotal = opencodeCliTokenTotal(
+            latestTokenTotal = agentTokenTotal(
                 input = status.totals.tokens.input,
                 output = status.totals.tokens.output,
                 reasoning = status.totals.tokens.reasoning
@@ -1097,7 +1097,7 @@ class AiToolWindowPanel(
         val defaultProfile: String
     ) {
         CHAT("chat", "Chat", "quick"),
-        AGENT("opencode", "Agent", "agent")
+        AGENT("agent", "Agent", "agent")
     }
 
     private enum class UiLineSource {
@@ -1302,7 +1302,7 @@ class AiToolWindowPanel(
 
 internal fun resolveRuntimeProjectRootValue(runtime: String, projectBasePath: String?): String {
     return when (runtime.trim().lowercase()) {
-        "opencode" -> projectBasePath.orEmpty()
+        "agent" -> projectBasePath.orEmpty()
         else -> projectBasePath.orEmpty()
     }
 }
@@ -1317,7 +1317,7 @@ internal fun resolveContextPercent(percent: Double?, used: Int, contextWindow: I
     return ((used.toDouble() / window.toDouble()) * 100.0).toInt().coerceIn(0, 100)
 }
 
-internal fun opencodeCliTokenTotal(input: Int, output: Int, reasoning: Int): Int =
+internal fun agentTokenTotal(input: Int, output: Int, reasoning: Int): Int =
     (input + output + reasoning).coerceAtLeast(0)
 
 internal fun buildStatusLabelText(

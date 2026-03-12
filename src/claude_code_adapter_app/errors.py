@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -38,3 +38,4 @@ def build_error_payload(
             "requestId": request_id,
         }
     }
+

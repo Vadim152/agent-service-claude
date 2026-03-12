@@ -1,4 +1,4 @@
-"""OpenCode delegated runtime and run driver."""
+﻿"""ClaudeCode delegated runtime and run driver."""
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +10,7 @@ from threading import RLock
 from typing import Any
 
 from infrastructure.runtime_errors import ChatRuntimeError
-from runtime.opencode_adapter import OpenCodeAdapterError
+from runtime.agent_adapter import ClaudeCodeAdapterError
 
 
 def _utcnow() -> str:
@@ -20,7 +20,7 @@ def _utcnow() -> str:
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "needs_attention", "cancelled"}
 
 
-class OpenCodeRunDriver:
+class AgentRunDriver:
     def __init__(
         self,
         *,
@@ -50,11 +50,11 @@ class OpenCodeRunDriver:
             created = await asyncio.to_thread(self._adapter_client.create_run, self._build_create_payload(run))
             backend_run_id = str(created.get("backendRunId") or created.get("runId") or created.get("id") or "").strip()
             if not backend_run_id:
-                raise RuntimeError("OpenCode adapter did not return backend run id")
+                raise RuntimeError("Claude Code adapter did not return backend run id")
             self._run_state_store.patch_job(
                 run_id,
-                backend="opencode-adapter",
-                runtime="opencode",
+                backend="claude_code",
+                runtime="agent",
                 backend_run_id=backend_run_id,
                 backend_session_id=created.get("backendSessionId") or created.get("sessionId"),
                 execution_id=backend_run_id,
@@ -70,7 +70,7 @@ class OpenCodeRunDriver:
                 session_id=session_id,
                 run_id=run_id,
                 status=self._normalize_status(created.get("status") or "queued"),
-                current_action=str(created.get("currentAction") or "Dispatching OpenCode run"),
+                current_action=str(created.get("currentAction") or "Dispatching agent run"),
                 backend_session_id=created.get("backendSessionId") or created.get("sessionId"),
             )
 
@@ -79,7 +79,7 @@ class OpenCodeRunDriver:
             run = self._require_run(run_id)
             backend_run_id = str(run.get("backend_run_id") or "").strip()
             if not backend_run_id:
-                raise RuntimeError("OpenCode backend run id is missing")
+                raise RuntimeError("Claude Code backend run id is missing")
             if bool(run.get("cancel_requested")) and not cancel_forwarded and str(run.get("status")) not in TERMINAL_RUN_STATUSES:
                 await asyncio.to_thread(self._adapter_client.cancel_run, backend_run_id)
                 cancel_forwarded = True
@@ -124,8 +124,8 @@ class OpenCodeRunDriver:
         self._run_state_store.patch_job(
             run_id,
             status=normalized_status,
-            runtime="opencode",
-            backend="opencode-adapter",
+            runtime="agent",
+            backend="claude_code",
             backend_run_id=status_payload.get("backendRunId") or status_payload.get("runId") or run.get("backend_run_id"),
             backend_session_id=backend_session_id,
             execution_id=status_payload.get("backendRunId") or status_payload.get("runId") or run.get("backend_run_id"),
@@ -147,7 +147,7 @@ class OpenCodeRunDriver:
         if session_id and current_action and normalized_status not in TERMINAL_RUN_STATUSES and current_action != last_progress_action:
             self._session_state_store.append_event(
                 session_id,
-                "opencode.run.progress",
+                "run.progress",
                 {
                     "sessionId": session_id,
                     "runId": run_id,
@@ -183,7 +183,7 @@ class OpenCodeRunDriver:
                     after=next_cursor,
                     limit=self._event_page_size,
                 )
-            except OpenCodeAdapterError as exc:
+            except ClaudeCodeAdapterError as exc:
                 if exc.code == "stale_cursor":
                     next_cursor = int((exc.details or {}).get("nextCursor") or next_cursor)
                     self._run_state_store.patch_job(run_id, sync_cursor=next_cursor, last_synced_at=_utcnow())
@@ -197,7 +197,7 @@ class OpenCodeRunDriver:
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                event_type = str(item.get("eventType") or item.get("type") or "run.progress")
+                event_type = self._normalize_event_type(item.get("eventType") or item.get("type") or "run.progress")
                 event_payload = dict(item.get("payload") or {})
                 event_payload.setdefault("runId", run_id)
                 event_payload.setdefault("backendRunId", backend_run_id)
@@ -205,7 +205,7 @@ class OpenCodeRunDriver:
                 if session_id:
                     self._session_state_store.append_event(
                         session_id,
-                        f"opencode.{event_type}",
+                        event_type,
                         {"sessionId": session_id, **event_payload},
                     )
             if not items:
@@ -229,7 +229,7 @@ class OpenCodeRunDriver:
             attempt = attempts[-1]
         else:
             attempt = {
-                "attempt_id": "opencode-1",
+                "attempt_id": "agent-1",
                 "attempt_no": 1,
                 "status": str(status_payload.get("status") or run.get("status") or "queued"),
                 "started_at": run.get("started_at") or _utcnow(),
@@ -257,7 +257,7 @@ class OpenCodeRunDriver:
                 name=str(artifact.get("name") or "artifact.txt"),
                 content=str(artifact.get("content") or ""),
                 media_type=str(artifact.get("mediaType") or artifact.get("media_type") or "text/plain"),
-                connector_source="opencode.artifacts",
+                connector_source="agent.artifacts",
                 run_id=run_id,
                 attempt_id=attempt_id,
             )
@@ -286,11 +286,11 @@ class OpenCodeRunDriver:
             stored = self._session_state_store.set_pending_tool_call(
                 session_id,
                 tool_call_id=approval_id,
-                tool_name=str(item.get("toolName") or item.get("tool") or "opencode.tool"),
+                tool_name=str(item.get("toolName") or item.get("tool") or "agent.tool"),
                 args={"backend_run_id": backend_run_id, "run_id": run_id, **dict(item.get("metadata") or {})},
                 risk_level=str(item.get("riskLevel") or "high"),
                 requires_confirmation=bool(item.get("requiresConfirmation", True)),
-                title=str(item.get("title") or item.get("toolName") or "OpenCode approval"),
+                title=str(item.get("title") or item.get("toolName") or "Agent approval"),
                 kind=str(item.get("kind") or "tool"),
             )
             if stored is not None and self._policy_service is not None:
@@ -324,7 +324,7 @@ class OpenCodeRunDriver:
         self._session_state_store.update_session(
             session_id,
             activity="idle" if status in {"succeeded", "cancelled"} else "error",
-            current_action="Idle" if status in {"succeeded", "cancelled"} else "OpenCode failed",
+            current_action="Idle" if status in {"succeeded", "cancelled"} else "Agent failed",
             active_run_status=status,
             active_run_backend=run.get("backend"),
             backend_session_id=run.get("backend_session_id"),
@@ -360,7 +360,7 @@ class OpenCodeRunDriver:
             "current_action": current_action,
             "active_run_id": run_id,
             "active_run_status": status,
-            "active_run_backend": "opencode-adapter",
+            "active_run_backend": "claude_code",
             "backend_session_id": backend_session_id,
         }
         if totals is not None:
@@ -398,12 +398,12 @@ class OpenCodeRunDriver:
         ).strip()
         status = str(run.get("status") or "failed")
         if status == "succeeded":
-            return text or "OpenCode run completed successfully."
+            return text or "Agent run completed successfully."
         if status == "cancelled":
-            return text or "OpenCode run was cancelled."
-        if fallback_error and fallback_error.lower() not in {"failed", "error", "opencode failed", "opencode run failed"}:
+            return text or "Agent run was cancelled."
+        if fallback_error and fallback_error.lower() not in {"failed", "error", "agent failed", "claude code run failed"}:
             return error_text or text or fallback_error
-        return error_text or text or "OpenCode run failed."
+        return error_text or text or "Agent run failed."
 
     @staticmethod
     def _normalize_status(value: Any) -> str:
@@ -426,6 +426,33 @@ class OpenCodeRunDriver:
             "canceled": "cancelled",
         }
         return mapping.get(raw, raw or "queued")
+
+    @staticmethod
+    def _normalize_event_type(value: Any) -> str:
+        raw = str(value or "run.progress").strip().lower()
+        mapping = {
+            "started": "run.started",
+            "run.started": "run.started",
+            "queued": "run.queued",
+            "run.queued": "run.queued",
+            "finished": "run.succeeded",
+            "run.finished": "run.succeeded",
+            "succeeded": "run.succeeded",
+            "run.succeeded": "run.succeeded",
+            "failed": "run.failed",
+            "run.failed": "run.failed",
+            "cancelled": "run.cancelled",
+            "run.cancelled": "run.cancelled",
+            "run.awaiting_approval": "run.awaiting_approval",
+            "run.artifact_published": "run.artifact_published",
+            "approval.decision": "approval.decision",
+            "permission.requested": "permission.requested",
+            "permission.approved": "permission.approved",
+            "permission.rejected": "permission.rejected",
+            "command.executed": "command.executed",
+            "run.progress": "run.progress",
+        }
+        return mapping.get(raw, raw or "run.progress")
 
     def _require_run(self, run_id: str) -> dict[str, Any]:
         run = self._run_state_store.get_job(run_id)
@@ -528,7 +555,7 @@ def _first_float(payload: dict[str, Any], *keys: str, default: float | None) -> 
     return default
 
 
-def _adapter_error_to_runtime_error(exc: OpenCodeAdapterError) -> ChatRuntimeError:
+def _adapter_error_to_runtime_error(exc: ClaudeCodeAdapterError) -> ChatRuntimeError:
     return ChatRuntimeError(
         str(exc),
         status_code=exc.status_code or 503,
@@ -539,8 +566,8 @@ def _adapter_error_to_runtime_error(exc: OpenCodeAdapterError) -> ChatRuntimeErr
     )
 
 
-class OpenCodeSessionRuntime:
-    name = "opencode"
+class AgentSessionRuntime:
+    name = "agent"
 
     def __init__(
         self,
@@ -594,7 +621,7 @@ class OpenCodeSessionRuntime:
             jira_instance=jira_instance,
             active_run_id=None,
             active_run_status=None,
-            active_run_backend="opencode-adapter",
+            active_run_backend="claude_code",
         )
         try:
             adapter_session = await asyncio.to_thread(
@@ -606,7 +633,7 @@ class OpenCodeSessionRuntime:
                     "profile": profile,
                 },
             )
-        except OpenCodeAdapterError as exc:
+        except ClaudeCodeAdapterError as exc:
             self.state_store.update_session(
                 payload["session_id"],
                 activity="error",
@@ -664,14 +691,14 @@ class OpenCodeSessionRuntime:
 
     async def process_message(self, *, session_id: str, run_id: str, message_id: str, content: str) -> None:
         if self._run_service is None:
-            raise ChatRuntimeError("OpenCode runtime is not initialized", status_code=503)
+            raise ChatRuntimeError("Agent runtime is not initialized", status_code=503)
         lock = self._session_lock(session_id)
         async with lock:
             session = self._require_session(session_id)
             self.state_store.append_message(session_id, role="user", content=content, run_id=run_id, message_id=message_id)
             self.state_store.append_event(session_id, "message.received", {"sessionId": session_id, "runId": run_id})
             created = self._run_service.create_run(
-                plugin="opencode",
+                plugin="agent",
                 project_root=str(session.get("project_root", "")),
                 input_payload={"prompt": content, "messageId": message_id, "backendSessionId": session.get("backend_session_id")},
                 session_id=session_id,
@@ -684,12 +711,12 @@ class OpenCodeSessionRuntime:
             self.state_store.update_session(
                 session_id,
                 activity="busy",
-                current_action="Dispatching OpenCode run",
+                current_action="Dispatching agent run",
                 active_run_id=created["run_id"],
                 active_run_status=created["status"],
-                active_run_backend="opencode-adapter",
+                active_run_backend="claude_code",
             )
-            self.state_store.append_event(session_id, "opencode.run_created", {"sessionId": session_id, "runId": created["run_id"]})
+            self.state_store.append_event(session_id, "run.created", {"sessionId": session_id, "runId": created["run_id"]})
 
     async def get_history(self, *, session_id: str, limit: int = 200) -> dict[str, Any]:
         session = self._require_session(session_id)
@@ -738,7 +765,7 @@ class OpenCodeSessionRuntime:
         session = self._require_session(session_id)
         try:
             payload = await asyncio.to_thread(self._adapter_client.get_session_diff, session_id)
-        except OpenCodeAdapterError as exc:
+        except ClaudeCodeAdapterError as exc:
             raise _adapter_error_to_runtime_error(exc) from exc
         diff = {
             "summary": dict(payload.get("summary") or {"files": 0, "additions": 0, "deletions": 0}),
@@ -763,29 +790,29 @@ class OpenCodeSessionRuntime:
         active_run_id = str(session.get("active_run_id") or "").strip() or None
         if command == "abort":
             if not active_run_id or self._run_service is None:
-                raise ChatRuntimeError("No active OpenCode run to cancel", status_code=409)
+                raise ChatRuntimeError("No active agent run to cancel", status_code=409)
             result = {"ok": True, "cancel": self._run_service.cancel_run(active_run_id)}
         elif command == "compact":
-            self.state_store.append_event(session_id, "opencode.compact.started", {"sessionId": session_id})
+            self.state_store.append_event(session_id, "session.compact.started", {"sessionId": session_id})
             try:
                 adapter_result = await asyncio.to_thread(self._adapter_client.compact_session, session_id)
-            except OpenCodeAdapterError as exc:
+            except ClaudeCodeAdapterError as exc:
                 self.state_store.append_event(
                     session_id,
-                    "opencode.compact.failed",
+                    "session.compact.failed",
                     {"sessionId": session_id, "message": str(exc)},
                 )
                 raise _adapter_error_to_runtime_error(exc) from exc
             self.state_store.append_event(
                 session_id,
-                "opencode.compact.succeeded",
+                "session.compact.succeeded",
                 {"sessionId": session_id, "result": adapter_result.get("result") or {}},
             )
             result = dict(adapter_result.get("result") or {})
         elif command in {"status", "diff", "help"}:
             try:
                 adapter_result = await asyncio.to_thread(self._adapter_client.execute_session_command, session_id, command)
-            except OpenCodeAdapterError as exc:
+            except ClaudeCodeAdapterError as exc:
                 raise _adapter_error_to_runtime_error(exc) from exc
             result = dict(adapter_result.get("result") or {})
             if command == "status":
@@ -815,11 +842,11 @@ class OpenCodeSessionRuntime:
             raise ChatRuntimeError(f"Permission not found: {permission_id}", status_code=404)
         backend_run_id = str((pending.get("args") or {}).get("backend_run_id") or "").strip()
         if not backend_run_id:
-            raise ChatRuntimeError("OpenCode approval is missing backend run id", status_code=422)
+            raise ChatRuntimeError("Agent approval is missing backend run id", status_code=422)
         public_decision = "approve" if decision in {"approve_once", "approve_always"} else "deny"
         try:
             await asyncio.to_thread(self._adapter_client.submit_approval_decision, backend_run_id, permission_id, public_decision)
-        except OpenCodeAdapterError as exc:
+        except ClaudeCodeAdapterError as exc:
             raise _adapter_error_to_runtime_error(exc) from exc
         self.state_store.pop_pending_tool_call(session_id, permission_id)
         self.state_store.append_event(session_id, "permission.approved" if public_decision == "approve" else "permission.rejected", {"sessionId": session_id, "permissionId": permission_id})
@@ -855,7 +882,7 @@ class OpenCodeSessionRuntime:
             return
         try:
             payload = await asyncio.to_thread(self._adapter_client.get_session, session_id)
-        except OpenCodeAdapterError:
+        except ClaudeCodeAdapterError:
             return
         self._apply_session_mapping_status(session_id=session_id, payload=payload)
 
@@ -888,3 +915,5 @@ class OpenCodeSessionRuntime:
         if not session or str(session.get("runtime", self.name)) != self.name:
             raise ChatRuntimeError(f"Session not found: {session_id}", status_code=404)
         return session
+
+

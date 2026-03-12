@@ -147,17 +147,17 @@ curl http://127.0.0.1:8000/health
 - startup: `503`, `status=initializing`
 - ready: `200`, `status=ok`
 
-## Local OpenCode Stack
+## Local Agent Stack
 
 For local `Agent` runtime development you only need two services:
 
 - `agent-service`
-- `opencode-adapter`
+- `claude-code-adapter`
 
 If you installed the repo in editable mode, the adapter can also be started directly with:
 
 ```powershell
-opencode-adapter
+claude-code-adapter
 ```
 
 If that command is not available yet, refresh the editable install once:
@@ -184,40 +184,40 @@ Stop both:
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 ```
 
-The adapter is configured through `.env` and by default talks to local `opencode serve` via:
+The adapter is configured through `.env` and by default talks to the Claude Code wrapper via:
 
-- `AGENT_SERVICE_OPENCODE_BACKEND_MODE=http`
-- `AGENT_SERVICE_OPENCODE_ADAPTER_URL=http://127.0.0.1:8011`
+- `AGENT_SERVICE_AGENT_BACKEND_MODE=http`
+- `AGENT_SERVICE_AGENT_ADAPTER_URL=http://127.0.0.1:8011`
 
 For delegated `Agent` runs, model selection is config-first:
 
 - by default the adapter does not force a model
-- OpenCode resolves the model from its own config, agent profile, or proxy/gateway setup
-- `agent-service` LLM settings such as `AGENT_SERVICE_LLM_MODEL` do not automatically apply to `Agent/opencode`
+- Claude Code resolves the model from its own config, agent profile, or proxy/gateway setup
+- `agent-service` LLM settings such as `AGENT_SERVICE_LLM_MODEL` do not automatically apply to delegated `Agent`
 - if needed for debugging, you can force a model with:
-  - `OPENCODE_ADAPTER_MODEL_MODE=override`
-  - `OPENCODE_ADAPTER_MODEL_OVERRIDE=<provider>/<model>`
+  - `CLAUDE_CODE_ADAPTER_MODEL_MODE=override`
+  - `CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE=<provider>/<model>`
 
-This repo also ships a project-level [opencode.json](/C:/Users/BaguM/IdeaProjects/agent-service/opencode.json) configured for direct GigaChat usage through OpenCode's OpenAI-compatible provider path. When `GIGACHAT_CLIENT_ID` and `GIGACHAT_CLIENT_SECRET` are present, the adapter bootstraps a short-lived `GIGACHAT_ACCESS_TOKEN` before starting `opencode serve`.
+The wrapper can bootstrap a short-lived `GIGACHAT_ACCESS_TOKEN` for Claude Code provider configuration when `GIGACHAT_CLIENT_ID` and `GIGACHAT_CLIENT_SECRET` are present.
 
 Config discovery for delegated `Agent` runs is project-aware:
 
-- if `projectRoot/opencode.json` exists, the adapter exports it as `OPENCODE_CONFIG`
-- if `projectRoot/.opencode/` exists, the adapter exports it as `OPENCODE_CONFIG_DIR`
+- if `projectRoot/claude-code.json` exists, the adapter exports it as `CLAUDE_CODE_CONFIG`
+- if `projectRoot/.claude-code/` exists, the adapter exports it as `CLAUDE_CODE_CONFIG_DIR`
 - if you want to force a global config regardless of project root, set:
-  - `OPENCODE_ADAPTER_CONFIG_FILE=<path-to-opencode.json>`
-  - `OPENCODE_ADAPTER_CONFIG_DIR=<path-to-.opencode>`
+  - `CLAUDE_CODE_ADAPTER_CONFIG_FILE=<path-to-claude-code.json>`
+  - `CLAUDE_CODE_ADAPTER_CONFIG_DIR=<path-to-.claude-code>`
 
-`OPENCODE_CONFIG_DIR` alone is not a replacement for `opencode.json`; it is only for the auxiliary `.opencode` directory structure.
+`CLAUDE_CODE_CONFIG_DIR` alone is not a replacement for `claude-code.json`; it is only for the auxiliary `.claude-code` directory structure.
 
-For deterministic local runs, the adapter also isolates OpenCode `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` under `.agent/opencode-adapter/xdg`. This avoids collisions with your global OpenCode state and prevents `readonly database` failures from leaking into delegated runs.
+For deterministic local runs, the adapter also isolates `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` under `.agent/claude-code-adapter/xdg`. This avoids collisions with your global Claude Code state and prevents `readonly database` failures from leaking into delegated runs.
 
 Runtime diagnostics are available from the adapter itself:
 
 - `GET /health`
 - `GET /debug/runtime`
 
-`/debug/runtime` reports the active project root, active `opencode.json`, active `.opencode` dir, resolved providers, resolved model, and the raw `/config` payload currently exposed by the underlying `opencode serve` process.
+`/debug/runtime` reports the active project root, active `claude-code.json`, active `.claude-code` dir, resolved providers, resolved model, and the raw `/config` payload currently exposed by the underlying wrapper process.
 
 ## Key Environment Variables
 

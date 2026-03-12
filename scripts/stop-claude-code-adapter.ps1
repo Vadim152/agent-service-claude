@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$pidFile = Join-Path $repoRoot ".agent\opencode-adapter\adapter.pid"
+$pidFile = Join-Path $repoRoot ".agent\claude-code-adapter\adapter.pid"
 $healthUrl = "http://127.0.0.1:8011/health"
 
 function Stop-ProcessTree {
@@ -32,7 +32,7 @@ if (-not (Test-Path $pidFile)) {
         }
     }
     catch {
-        Write-Output "OpenCode adapter is not running"
+        Write-Output "Claude Code adapter is not running"
         exit 0
     }
 }
@@ -40,4 +40,4 @@ if (-not (Test-Path $pidFile)) {
 $processId = [int](Get-Content $pidFile | Select-Object -First 1)
 Stop-ProcessTree -RootPid $processId
 Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-Write-Output "OpenCode adapter stopped (PID $processId)"
+Write-Output "Claude Code adapter stopped (PID $processId)"

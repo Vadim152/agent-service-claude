@@ -15,7 +15,7 @@ from claude_code_adapter_app.anthropic_gateway import _anthropic_to_gigachat, _g
 
 def test_anthropic_to_gigachat_maps_tools_and_tool_results() -> None:
     payload = {
-        "model": "gigachat/GigaChat-2-Pro",
+        "model": "gigachat/GigaChat-2",
         "system": [{"type": "text", "text": "System rules"}],
         "messages": [
             {"role": "user", "content": [{"type": "text", "text": "Read the file"}]},
@@ -55,8 +55,8 @@ def test_anthropic_to_gigachat_maps_tools_and_tool_results() -> None:
         ],
     }
 
-    translated = _anthropic_to_gigachat(payload, model="gigachat/GigaChat-2-Pro")
-    assert translated["model"] == "gigachat/GigaChat-2-Pro"
+    translated = _anthropic_to_gigachat(payload, model="gigachat/GigaChat-2")
+    assert translated["model"] == "gigachat/GigaChat-2"
     assert translated["function_call"] == "auto"
     assert translated["functions"][0]["name"] == "Read"
     assert translated["messages"][0]["role"] == "system"
@@ -69,7 +69,7 @@ def test_anthropic_to_gigachat_maps_tools_and_tool_results() -> None:
 
 def test_gigachat_to_anthropic_maps_function_call_to_tool_use() -> None:
     completion = SimpleNamespace(
-        model="gigachat/GigaChat-2-Pro",
+        model="gigachat/GigaChat-2",
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=4),
         choices=[
             SimpleNamespace(
@@ -83,7 +83,7 @@ def test_gigachat_to_anthropic_maps_function_call_to_tool_use() -> None:
     )
 
     translated = _gigachat_to_anthropic(completion)
-    assert translated["model"] == "gigachat/GigaChat-2-Pro"
+    assert translated["model"] == "gigachat/GigaChat-2"
     assert translated["stop_reason"] == "tool_use"
     assert translated["content"][0]["type"] == "tool_use"
     assert translated["content"][0]["name"] == "Read"

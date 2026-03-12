@@ -2,7 +2,7 @@
 param(
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$Prompt = "Reply with exactly 'OK' and do not modify any files.",
-    [string]$ExpectedModel = "gigachat/GigaChat-2-Pro",
+    [string]$ExpectedModel = "gigachat/GigaChat-2",
     [int]$TimeoutSec = 180
 )
 

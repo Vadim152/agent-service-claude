@@ -201,7 +201,7 @@ For delegated `Agent` runs, the production path is Claude Code headless CLI plus
 For deterministic local delegated runs, force GigaChat Pro explicitly:
 
 - `CLAUDE_CODE_ADAPTER_MODEL_MODE=override`
-- `CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE=gigachat/GigaChat-2-Pro`
+- `CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE=gigachat/GigaChat-2`
 
 For delegated `Agent` runs, note:
 

@@ -21,7 +21,7 @@ from claude_code_adapter_app.config import AdapterSettings
 from claude_code_adapter_app.main import create_app
 
 
-def _write_fake_claude_cli(path: Path, *, accepted_model: str = "gigachat/GigaChat-2-Pro") -> None:
+def _write_fake_claude_cli(path: Path, *, accepted_model: str = "gigachat/GigaChat-2") -> None:
     path.write_text(
         textwrap.dedent(
             f"""
@@ -232,7 +232,7 @@ def _write_fake_claude_cli(path: Path, *, accepted_model: str = "gigachat/GigaCh
     )
 
 
-def _build_claude_code_settings(tmp_path: Path, *, accepted_model: str = "gigachat/GigaChat-2-Pro") -> AdapterSettings:
+def _build_claude_code_settings(tmp_path: Path, *, accepted_model: str = "gigachat/GigaChat-2") -> AdapterSettings:
     cli = tmp_path / "fake_claude_cli.py"
     _write_fake_claude_cli(cli, accepted_model=accepted_model)
     return AdapterSettings(
@@ -248,7 +248,7 @@ def _build_claude_code_settings(tmp_path: Path, *, accepted_model: str = "gigach
     )
 
 
-def _build_client(tmp_path: Path, *, accepted_model: str = "gigachat/GigaChat-2-Pro") -> TestClient:
+def _build_client(tmp_path: Path, *, accepted_model: str = "gigachat/GigaChat-2") -> TestClient:
     settings = _build_claude_code_settings(tmp_path, accepted_model=accepted_model)
     return TestClient(create_app(settings))
 
@@ -271,8 +271,8 @@ def test_claude_code_adapter_debug_reports_headless_gateway_fields(tmp_path: Pat
         assert payload["headlessReady"] is None
         assert payload["gatewayReady"] is True
         assert payload["gigachatAuthReady"] is True
-        assert payload["forcedModel"] == "gigachat/GigaChat-2-Pro"
-        assert payload["resolvedModel"] == "gigachat/GigaChat-2-Pro"
+        assert payload["forcedModel"] == "gigachat/GigaChat-2"
+        assert payload["resolvedModel"] == "gigachat/GigaChat-2"
         assert payload["permissionProfile"] == "workspace_write"
         assert "Read" in payload["allowedTools"]
         assert "Bash" not in payload["allowedTools"]
@@ -427,7 +427,7 @@ def test_claude_code_adapter_blocks_when_gateway_auth_is_unavailable(tmp_path: P
         "ready": False,
         "gatewayReady": True,
         "gigachatAuthReady": False,
-        "resolvedModel": "gigachat/GigaChat-2-Pro",
+        "resolvedModel": "gigachat/GigaChat-2",
         "issues": [{"code": "gigachat_auth_failed", "message": "auth missing", "details": {}}],
     }
 
@@ -454,7 +454,7 @@ def test_internal_anthropic_routes_require_gateway_auth(tmp_path: Path) -> None:
         "id": "msg_1",
         "type": "message",
         "role": "assistant",
-        "model": "gigachat/GigaChat-2-Pro",
+        "model": "gigachat/GigaChat-2",
         "content": [{"type": "text", "text": f"echo: {payload['messages'][0]['content'][0]['text']}"}],
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 1, "output_tokens": 1},
@@ -468,13 +468,13 @@ def test_internal_anthropic_routes_require_gateway_auth(tmp_path: Path) -> None:
         headers = {"Authorization": f"Bearer {settings.gateway_token}"}
         models = client.get("/internal/anthropic/v1/models", headers=headers)
         assert models.status_code == 200
-        assert models.json()["data"][0]["id"] == "gigachat/GigaChat-2-Pro"
+        assert models.json()["data"][0]["id"] == "gigachat/GigaChat-2"
 
         message = client.post(
             "/internal/anthropic/v1/messages",
             headers=headers,
             json={
-                "model": "gigachat/GigaChat-2-Pro",
+                "model": "gigachat/GigaChat-2",
                 "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
             },
         )

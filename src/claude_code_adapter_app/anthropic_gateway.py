@@ -159,7 +159,7 @@ class AnthropicGatewayService:
         requested_model = str(requested or "").strip()
         if requested_model:
             return requested_model
-        return "gigachat/GigaChat-2-Pro"
+        return "gigachat/GigaChat-2"
 
 
 def _anthropic_to_gigachat(payload: dict[str, Any], *, model: str) -> dict[str, Any]:

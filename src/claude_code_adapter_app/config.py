@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import sys
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +17,45 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = ROOT_DIR / ".env"
 load_dotenv(ENV_PATH, override=False)
+
+_TOOL_PROFILES = {
+    "readonly": ["Read", "Glob", "Grep", "Task", "TaskOutput", "TodoWrite", "Skill"],
+    "workspace_write": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Task",
+        "TaskOutput",
+        "TodoWrite",
+        "Skill",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+    ],
+    "full_exec": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Task",
+        "TaskOutput",
+        "TodoWrite",
+        "Skill",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+    ],
+}
+
+
+def _default_claude_binary() -> str:
+    return "claude.cmd" if sys.platform.startswith("win") else "claude"
+
+
+def _default_gateway_token() -> str:
+    return secrets.token_hex(24)
 
 
 class AdapterSettings(BaseSettings):
@@ -31,16 +72,13 @@ class AdapterSettings(BaseSettings):
     port: int = Field(default=8011)
     log_level: str = Field(default="INFO")
 
-    binary: str = Field(default="claude")
+    binary: str = Field(default_factory=_default_claude_binary)
     binary_args_json: str | None = Field(default=None)
-    runner_type: str = Field(default="raw_json_runner")
+    runner_type: str = Field(default="claude_code")
     default_agent: str = Field(default="agent")
     model_mode: str = Field(default="config")
     model_override: str | None = Field(default=None)
     default_model: str | None = Field(default=None)
-    server_host: str = Field(default="127.0.0.1")
-    server_port: int = Field(default=4096)
-    print_logs: bool = Field(default=False)
     work_root: Path = Field(default=ROOT_DIR / ".agent" / "claude-code-adapter")
     state_backend: str = Field(default="sqlite")
     state_file: Path | None = Field(default=None)
@@ -54,6 +92,14 @@ class AdapterSettings(BaseSettings):
     agent_map_json: str | None = Field(default=None)
     env_allowlist_json: str | None = Field(default=None)
     inherit_parent_env: bool = Field(default=True)
+    gateway_token: str = Field(default_factory=_default_gateway_token)
+    permission_profile: str = Field(default="workspace_write")
+    allowed_tools_json: str | None = Field(default=None)
+    permission_mode: str = Field(default="default")
+    gigachat_access_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GIGACHAT_ACCESS_TOKEN"),
+    )
     gigachat_client_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("GIGACHAT_CLIENT_ID", "AGENT_SERVICE_GIGACHAT_CLIENT_ID"),
@@ -96,11 +142,18 @@ class AdapterSettings(BaseSettings):
             self.default_model = self.default_model.strip() or None
         if self.model_mode == "override" and not (self.model_override or self.default_model):
             raise ValueError("model_override must be set when model_mode=override")
-        if self.server_port < 1:
-            raise ValueError("server_port must be >= 1")
         self.state_backend = self.state_backend.strip().lower()
         if self.state_backend not in {"sqlite", "memory"}:
             raise ValueError("state_backend must be one of: sqlite, memory")
+        self.permission_profile = self.permission_profile.strip().lower()
+        if self.permission_profile not in _TOOL_PROFILES:
+            raise ValueError(
+                "permission_profile must be one of: "
+                + ", ".join(sorted(_TOOL_PROFILES))
+            )
+        self.permission_mode = self.permission_mode.strip()
+        if not self.permission_mode:
+            raise ValueError("permission_mode must not be empty")
         if self.inline_artifact_max_bytes < 1:
             raise ValueError("inline_artifact_max_bytes must be >= 1")
         if self.graceful_kill_timeout_ms < 1:
@@ -170,15 +223,9 @@ class AdapterSettings(BaseSettings):
             "GIGACHAT_API_URL",
             "GIGACHAT_AUTH_URL",
             "GIGACHAT_SCOPE",
-            "OPENAI_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_ENDPOINT",
-            "LITELLM_API_KEY",
-            "PORTKEY_API_KEY",
             "CLAUDE_CODE_CONFIG_DIR",
             "CLAUDE_CODE_CONFIG",
         ]
@@ -194,6 +241,28 @@ class AdapterSettings(BaseSettings):
         if self.state_backend == "memory":
             return None
         return Path(self.state_file) if self.state_file is not None else self.work_root / "state.sqlite3"
+
+    @property
+    def internal_host(self) -> str:
+        host = self.host.strip()
+        if host in {"", "0.0.0.0", "::"}:
+            return "127.0.0.1"
+        return host
+
+    @property
+    def internal_http_base_url(self) -> str:
+        return f"http://{self.internal_host}:{self.port}"
+
+    @property
+    def gateway_base_url(self) -> str:
+        return f"{self.internal_http_base_url}/internal/anthropic"
+
+    @property
+    def allowed_tools(self) -> list[str]:
+        configured = _parse_json_list(self.allowed_tools_json)
+        if configured:
+            return configured
+        return list(_TOOL_PROFILES[self.permission_profile])
 
     def xdg_env(self) -> dict[str, str]:
         mapping = {
@@ -232,6 +301,8 @@ class AdapterSettings(BaseSettings):
             env["CLAUDE_CODE_CONFIG_DIR"] = resolved_config_dir
         else:
             env.pop("CLAUDE_CODE_CONFIG_DIR", None)
+        env["ANTHROPIC_BASE_URL"] = self.gateway_base_url
+        env["ANTHROPIC_AUTH_TOKEN"] = self.gateway_token
         return env
 
     def resolve_claude_code_config_file(self, project_root: str | Path | None = None) -> str | None:

@@ -6,18 +6,48 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-PythonLauncher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $venvCandidates = @(
+        (Join-Path $RepoRoot ".venv311\Scripts\python.exe"),
+        (Join-Path $RepoRoot ".venv\Scripts\python.exe")
+    )
+    foreach ($candidate in $venvCandidates) {
+        if (Test-Path $candidate) {
+            return @{
+                FilePath = $candidate
+                Prefix = @()
+            }
+        }
+    }
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        return @{
+            FilePath = $python.Source
+            Prefix = @()
+        }
+    }
+
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        return @{
+            FilePath = $pyLauncher.Source
+            Prefix = @("-3.10")
+        }
+    }
+
+    throw "Python executable not found. Install Python or create .venv/.venv311."
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
-$pythonCandidates = @(
-    (Join-Path $repoRoot ".venv311\Scripts\python.exe"),
-    (Join-Path $repoRoot ".venv\Scripts\python.exe")
-)
-$python = $pythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $python) {
-    throw "Python executable not found in .venv311 or .venv"
-}
-
+$python = Resolve-PythonLauncher -RepoRoot $repoRoot
 $healthUrl = "http://$HostAddress`:$Port/health"
 $pidFile = Join-Path $repoRoot ".agent\agent-service\agent-service.pid"
 
@@ -44,9 +74,10 @@ foreach ($logFile in @($stdoutLog, $stderrLog)) {
 }
 
 $env:PYTHONPATH = "src"
+$arguments = @($python.Prefix + @("-m", "app.main"))
 $process = Start-Process `
-    -FilePath $python `
-    -ArgumentList "-m", "app.main" `
+    -FilePath $python.FilePath `
+    -ArgumentList $arguments `
     -WorkingDirectory $repoRoot `
     -PassThru `
     -WindowStyle Hidden `

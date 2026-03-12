@@ -184,21 +184,38 @@ Stop both:
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 ```
 
-The adapter is configured through `.env` and by default talks to the Claude Code wrapper via:
+The adapter is configured through `.env` and by default runs Claude Code in headless CLI mode with an embedded Anthropic-compatible gateway:
 
 - `AGENT_SERVICE_AGENT_BACKEND_MODE=http`
 - `AGENT_SERVICE_AGENT_ADAPTER_URL=http://127.0.0.1:8011`
+- `CLAUDE_CODE_ADAPTER_RUNNER_TYPE=claude_code`
+- `CLAUDE_CODE_ADAPTER_BINARY=claude.cmd` on Windows (`claude` on Unix-like hosts)
+- `CLAUDE_CODE_ADAPTER_PERMISSION_PROFILE=workspace_write`
 
-For delegated `Agent` runs, model selection is config-first:
+For delegated `Agent` runs, the production path is Claude Code headless CLI plus the embedded gateway:
 
-- by default the adapter does not force a model
-- Claude Code resolves the model from its own config, agent profile, or proxy/gateway setup
+- `claude_code` is the default delegated runner
+- `raw_json_runner` remains only for fake/integration tests
+- adapter startup runs a Claude Code preflight and surfaces the result at `GET /debug/runtime`
+
+For deterministic local delegated runs, force GigaChat Pro explicitly:
+
+- `CLAUDE_CODE_ADAPTER_MODEL_MODE=override`
+- `CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE=gigachat/GigaChat-2-Pro`
+
+For delegated `Agent` runs, note:
+
+- Claude Code talks to the adapter's embedded Anthropic-compatible gateway through `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`
+- the gateway authenticates to GigaChat using `GIGACHAT_ACCESS_TOKEN` or `GIGACHAT_CLIENT_ID`/`GIGACHAT_CLIENT_SECRET`
 - `agent-service` LLM settings such as `AGENT_SERVICE_LLM_MODEL` do not automatically apply to delegated `Agent`
-- if needed for debugging, you can force a model with:
-  - `CLAUDE_CODE_ADAPTER_MODEL_MODE=override`
-  - `CLAUDE_CODE_ADAPTER_MODEL_OVERRIDE=<provider>/<model>`
+- startup and smoke checks require:
+  - a runnable Claude Code binary
+  - support for headless flags such as `-p`, `--output-format`, `--resume`, and `--session-id`
+  - embedded gateway readiness
+  - working GigaChat auth/token resolution
+  - optional explicit model probe when you intentionally request `GET /debug/runtime?includeProbe=true`
 
-The wrapper can bootstrap a short-lived `GIGACHAT_ACCESS_TOKEN` for Claude Code provider configuration when `GIGACHAT_CLIENT_ID` and `GIGACHAT_CLIENT_SECRET` are present.
+The embedded gateway can bootstrap a short-lived `GIGACHAT_ACCESS_TOKEN` when `GIGACHAT_CLIENT_ID` and `GIGACHAT_CLIENT_SECRET` are present.
 
 Config discovery for delegated `Agent` runs is project-aware:
 
@@ -216,8 +233,18 @@ Runtime diagnostics are available from the adapter itself:
 
 - `GET /health`
 - `GET /debug/runtime`
+- `GET /internal/anthropic/v1/models`
+- `POST /internal/anthropic/v1/messages`
+- `POST /internal/anthropic/v1/messages/count_tokens`
 
-`/debug/runtime` reports the active project root, active `claude-code.json`, active `.claude-code` dir, resolved providers, resolved model, and the raw `/config` payload currently exposed by the underlying wrapper process.
+`/debug/runtime` reports:
+
+- Claude Code binary resolution and CLI version
+- preflight status and blocking issues
+- gateway readiness, GigaChat auth readiness, and optional headless model probe status
+- permission profile, allowed tools, and resolved model
+- active project root, active `claude-code.json`, active `.claude-code` dir
+- embedded gateway base URL used by Claude Code child processes
 
 ## Key Environment Variables
 

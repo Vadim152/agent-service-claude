@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import itertools
 import os
@@ -43,6 +43,14 @@ class ClaudeCodeAdapterService:
         self._id_counter = itertools.count(1)
 
     def ensure_session(self, request: AdapterSessionEnsureRequest) -> AdapterSessionDto:
+        return self._ensure_session(request, require_runtime=True)
+
+    def _ensure_session(
+        self,
+        request: AdapterSessionEnsureRequest,
+        *,
+        require_runtime: bool,
+    ) -> AdapterSessionDto:
         external_session_id = str(request.external_session_id or "").strip()
         if not external_session_id:
             raise AdapterApiError(
@@ -51,6 +59,8 @@ class ClaudeCodeAdapterService:
                 status_code=422,
             )
         project_root = self._normalize_project_root(request.project_root)
+        if require_runtime:
+            self._require_runtime_ready(project_root)
         existing = self._state_store.get_session_mapping(external_session_id)
         if existing is not None:
             mapped_project_root = str(existing.get("project_root") or "").strip()
@@ -61,12 +71,18 @@ class ClaudeCodeAdapterService:
                     status_code=422,
                     details={"expectedProjectRoot": mapped_project_root, "actualProjectRoot": project_root},
                 )
+            existing = self._repair_backend_session_mapping(
+                mapping=existing,
+                external_session_id=external_session_id,
+                project_root=project_root,
+            )
             self._state_store.ensure_session_diff(
                 external_session_id=external_session_id,
                 backend_session_id=str(existing.get("backend_session_id") or "").strip() or None,
             )
             return self._session_dto(existing)
 
+        backend_session_id = None
         if self._settings.runner_type == "raw_json_runner":
             backend_session_id = f"session-{abs(hash(external_session_id)) % 100000}"
         else:
@@ -74,15 +90,7 @@ class ClaudeCodeAdapterService:
                 project_root=project_root,
                 external_session_id=external_session_id,
             )
-            backend_session_id = str(payload.get("id") or "").strip()
-            if not backend_session_id:
-                raise AdapterApiError(
-                    "backend_unavailable",
-                    "Claude Code did not return a backend session id.",
-                    status_code=503,
-                    retryable=True,
-                )
-
+            backend_session_id = str(payload.get("id") or "").strip() or None
         provider_id, model_id = self._resolve_provider_model(None, None)
         mapping = self._state_store.upsert_session_mapping(
             external_session_id,
@@ -109,17 +117,18 @@ class ClaudeCodeAdapterService:
         project_root = self._normalize_project_root(request.project_root)
         if not str(request.prompt or "").strip():
             raise AdapterApiError("validation_error", "prompt must not be empty", status_code=422)
+        self._require_runtime_ready(project_root)
 
         backend_session_id = request.backend_session_id
-        session_mapping = None
         if request.session_id:
-            session_mapping = self.ensure_session(
+            session_mapping = self._ensure_session(
                 AdapterSessionEnsureRequest(
                     externalSessionId=request.session_id,
                     projectRoot=project_root,
                     source=request.source,
                     profile=request.profile,
-                )
+                ),
+                require_runtime=False,
             )
             backend_session_id = str(session_mapping.backend_session_id or "").strip() or backend_session_id
 
@@ -148,6 +157,7 @@ class ClaudeCodeAdapterService:
             "started_at": None,
             "finished_at": None,
             "updated_at": now,
+            "model": self._settings.resolve_forced_model(),
             "work_dir": str((self._settings.work_root / "runs" / backend_run_id).resolve()),
         }
         self._state_store.create_run(run)
@@ -286,6 +296,7 @@ class ClaudeCodeAdapterService:
 
     def compact_session(self, external_session_id: str) -> AdapterSessionCommandResponse:
         mapping = self._require_session_mapping(external_session_id)
+        self._require_runtime_ready(str(mapping.get("project_root") or ""))
         active_run = self._state_store.find_active_run_for_session(external_session_id)
         if active_run is not None or self._state_store.has_pending_approvals_for_session(external_session_id):
             raise AdapterApiError(
@@ -317,16 +328,12 @@ class ClaudeCodeAdapterService:
             mapping.get("last_provider_id"),
             mapping.get("last_model_id"),
         )
-        if self._settings.runner_type == "claude_code":
-            self._process_supervisor.compact_session(
-                project_root=str(mapping.get("project_root") or ""),
-                backend_session_id=backend_session_id,
-                provider_id=provider_id,
-                model_id=model_id,
-            )
-            compact_status = "completed"
-        else:
-            compact_status = "noop"
+        adapter_result = self._process_supervisor.compact_session(
+            project_root=str(mapping.get("project_root") or ""),
+            backend_session_id=backend_session_id,
+            provider_id=provider_id,
+            model_id=model_id,
+        )
         updated = self._state_store.upsert_session_mapping(
             external_session_id,
             status="idle",
@@ -341,7 +348,7 @@ class ClaudeCodeAdapterService:
             command="compact",
             accepted=True,
             result={
-                "status": compact_status,
+                "status": str(adapter_result.get("status") or "noop"),
                 "backendSessionId": backend_session_id,
                 "providerId": provider_id,
                 "modelId": model_id,
@@ -517,6 +524,69 @@ class ClaudeCodeAdapterService:
             raise AdapterApiError("validation_error", "projectRoot must not be empty", status_code=422)
         return str(Path(project_root).resolve())
 
+    def _require_runtime_ready(self, project_root: str) -> None:
+        if self._settings.runner_type != "claude_code":
+            return
+        snapshot = self._process_supervisor.runtime_preflight(
+            project_root=project_root,
+            force_refresh=True,
+            include_probe=False,
+        )
+        if bool(snapshot.get("ready")):
+            return
+        issues = list(snapshot.get("issues") or [])
+        message = str((issues[0] or {}).get("message") if issues else "").strip() or "Claude Code runtime preflight failed."
+        raise AdapterApiError(
+            "claude_code_preflight_failed",
+            message,
+            status_code=503,
+            retryable=False,
+            details={
+                "runnerType": self._settings.runner_type,
+                "configuredBinary": snapshot.get("configured_binary"),
+                "resolvedBinary": snapshot.get("resolved_binary"),
+                "cliVersion": snapshot.get("cli_version"),
+                "headlessReady": snapshot.get("headless_ready"),
+                "gatewayReady": snapshot.get("gateway_ready"),
+                "gatewayBaseUrl": snapshot.get("gateway_base_url"),
+                "gigachatAuthReady": snapshot.get("gigachat_auth_ready"),
+                "forcedModel": self._settings.resolve_forced_model(),
+                "permissionProfile": self._settings.permission_profile,
+                "allowedTools": list(self._settings.allowed_tools),
+                "issues": issues,
+            },
+        )
+
+    def _repair_backend_session_mapping(
+        self,
+        *,
+        mapping: dict[str, Any],
+        external_session_id: str,
+        project_root: str,
+    ) -> dict[str, Any]:
+        if self._settings.runner_type != "claude_code":
+            return mapping
+        backend_session_id = str(mapping.get("backend_session_id") or "").strip()
+        if self._process_supervisor.runtime.is_valid_backend_session_id(backend_session_id):
+            return mapping
+        payload = self._process_supervisor.create_backend_session(
+            project_root=project_root,
+            external_session_id=external_session_id,
+        )
+        repaired_session_id = str(payload.get("id") or "").strip()
+        if not repaired_session_id:
+            raise AdapterApiError(
+                "backend_session_repair_failed",
+                "Failed to create a replacement Claude session id.",
+                status_code=503,
+                retryable=True,
+            )
+        return self._state_store.upsert_session_mapping(
+            external_session_id,
+            backend_session_id=repaired_session_id,
+            project_root=project_root,
+        )
+
     def _resolve_provider_model(
         self,
         provider_id: str | None,
@@ -582,4 +652,3 @@ def _normalize_diff_files(files: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
-
